@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+
+# Packaged extensions
+*.vsix
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE (project-specific, not extension source)
+.claude/orchestrator/
+.versus/
+
+# Environment
+.env
