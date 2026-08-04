@@ -82,6 +82,38 @@ export function ensureSpecsReadme(workspace: string): boolean {
   return true;
 }
 
+/**
+ * Pins CommonJS for a directory holding deployed bundles.
+ *
+ * A project whose own package.json declares `"type": "module"` — routine in
+ * modern JS projects — makes Node treat every .js under that tree as an ES
+ * module, including these CommonJS bundles, which then die with
+ * `ReferenceError: require is not defined in ES module scope`. For the MCP
+ * server that means no phase state at all: the methodology silently switches
+ * off in exactly the projects most likely to use it.
+ *
+ * Node resolves module type from the nearest package.json, so one file here
+ * settles it. Applied to the plugin directory too — the hooks live outside the
+ * project and are safe from the project's package.json, but not from a stray
+ * one further up the user's home directory.
+ *
+ * Returns true if the file was created or corrected.
+ */
+export function pinCommonJs(dir: string): boolean {
+  const pkgPath = path.join(dir, "package.json");
+  const content = JSON.stringify({ type: "commonjs" }, null, 2) + "\n";
+
+  if (fs.existsSync(pkgPath)) {
+    try {
+      if (fs.readFileSync(pkgPath, "utf-8") === content) return false;
+    } catch { /* unreadable — rewrite */ }
+  }
+
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(pkgPath, content, "utf-8");
+  return true;
+}
+
 /** Kimi Code's home directory (KIMI_CODE_HOME wins, as in the CLI itself). */
 export function kimiHome(): string {
   const override = process.env.KIMI_CODE_HOME;

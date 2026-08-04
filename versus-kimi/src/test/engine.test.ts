@@ -10,7 +10,8 @@ import { getCompleteGuidance } from "../rules/full-guidance";
 import { validateSafeguard } from "../rules/safeguards";
 import { detectOutcome } from "../hooks/test-outcome";
 import { isAllowedPath } from "../hooks/phase-gate";
-import { ensureGlobalPermissions, permissionSnippet } from "../setup";
+import { ensureGlobalPermissions, permissionSnippet, pinCommonJs } from "../setup";
+import { spawnSync } from "child_process";
 
 function createTempWorkspace(): string {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "versus-test-"));
@@ -615,6 +616,65 @@ test("permissions: a user-owned [permission] section is never touched", () => {
     assert.strictEqual(fs.readFileSync(configPath, "utf-8"), mine);
     assert.ok(permissionSnippet().includes("Write"), "the snippet must show what to add");
   });
+});
+
+console.log("\n=== CommonJS Pinning Tests ===\n");
+
+test("pinCommonJs: writes the marker and is idempotent", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "versus-pin-"));
+  try {
+    assert.strictEqual(pinCommonJs(dir), true);
+    assert.strictEqual(pinCommonJs(dir), false);
+    const parsed = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf-8"));
+    assert.strictEqual(parsed.type, "commonjs");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("pinCommonJs: repairs a file that says something else", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "versus-pin-"));
+  try {
+    fs.writeFileSync(path.join(dir, "package.json"), '{"type":"module"}', "utf-8");
+    assert.strictEqual(pinCommonJs(dir), true);
+    assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf-8")).type, "commonjs");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the MCP server survives a project that declares type:module", () => {
+  // The regression this guards: Node resolves module type from the nearest
+  // package.json, so a modern ESM project turned the CommonJS bundle into an
+  // ES module and the server died with "require is not defined" — taking the
+  // whole methodology offline, since without MCP there is no phase state.
+  const bundle = path.resolve(__dirname, "..", "bundle", "server.js");
+  if (!fs.existsSync(bundle)) {
+    console.log("  ~ skipped (run `npm run bundle` first)");
+    return;
+  }
+
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "versus-esm-"));
+  try {
+    fs.writeFileSync(path.join(project, "package.json"), '{"name":"p","type":"module"}', "utf-8");
+    const deployDir = path.join(project, ".versus", "kimi");
+    fs.mkdirSync(deployDir, { recursive: true });
+    fs.copyFileSync(bundle, path.join(deployDir, "server.js"));
+    pinCommonJs(deployDir);
+
+    const handshake = JSON.stringify({
+      jsonrpc: "2.0", id: 1, method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "1" } },
+    });
+    const r = spawnSync("node", [path.join(deployDir, "server.js")], {
+      input: handshake + "\n", encoding: "utf-8", timeout: 20000,
+    });
+
+    assert.ok(!/require is not defined/.test(r.stderr || ""), "must not crash as an ES module");
+    assert.ok(/"serverInfo"/.test(r.stdout || ""), "must answer the MCP handshake: " + (r.stderr || "").slice(0, 200));
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true });
+  }
 });
 
 console.log("\n=== All tests completed ===\n");

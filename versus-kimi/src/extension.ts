@@ -17,6 +17,7 @@ import {
   writePluginManifest,
   permissionSnippet,
   kimiHome,
+  pinCommonJs,
   BUNDLE_SUBDIR,
   HOOK_BUNDLES,
   PLUGIN_ID,
@@ -275,6 +276,7 @@ function deployPlugin(extensionPath: string, version: string) {
   if (!fs.existsSync(targetDir)) {
     fs.mkdirSync(targetDir, { recursive: true });
   }
+  pinCommonJs(targetDir);
 
   for (const file of HOOK_BUNDLES) {
     const src = path.join(bundleDir, file);
@@ -325,6 +327,7 @@ function deployServer(extensionPath: string, workspacePath: string) {
   if (!fs.existsSync(targetDir)) {
     fs.mkdirSync(targetDir, { recursive: true });
   }
+  pinCommonJs(targetDir);
 
   const srcContent = fs.readFileSync(src);
   if (fs.existsSync(dest) && srcContent.equals(fs.readFileSync(dest))) return;
