@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.1] - 2026-08-05
+
+### Changed
+- **The findings-table gate requires one row, not three.** The threshold was measurement, not verification: Versus is used to study whether the methodology surfaces defects, and a floor of three findings puts a thumb on the scale of the very number being measured. One row is enough to do the gate's actual job — reject a severity-only grid, which has zero rows carrying a finding id. A genuine Phase 2 that found exactly one thing now advances.
+- **Phase 2's exit gate no longer offers a skip to Phase 4.** It read "zero findings → advance to Phase 3 (optional refinement) OR skip to Phase 4", which named a transition the engine does not allow and framed Phase 3 as optional. Zero findings across all lenses is now stated for what it is — a red flag that the critique was shallow or the modules too coarse, not a clean bill — and the only valid transition from Phase 2 is to Phase 3.
+- **The `lens` column must carry the canonical lens name** (`Security`, not `Segurança` or `SEG`). Findings tables are only aggregable across projects if the lens is spelled the same way every time.
+- Removed the leftover "Table of modules × lenses … with severities" line, which still described the grid the findings table replaced.
+
+### Fixed
+- **A contradictory phase-gate test had been failing since the `.env` change, unnoticed.** One test asserted `.env` must be writable while another asserted the opposite; the second was added when `.env` was dropped from the allowlist and the first was never updated. `npm test` had been exiting 1 the whole time — the runner does set `process.exitCode`, but the verification here was `npm test | grep -c "✓"`, which counts checkmarks and discards both the ✗ lines and the exit code. Checking the exit code is the fix on both sides.
+
 ## [0.3.0] - 2026-08-05
 
 ### Changed

@@ -698,7 +698,7 @@ test("phase gate: code is blocked in either form", () => {
 });
 
 test("phase gate: scaffolding and docs stay writable", () => {
-  for (const p of ["package.json", "tsconfig.json", "README.md", ".gitignore", "AGENTS.md", ".env"]) {
+  for (const p of ["package.json", "tsconfig.json", "README.md", ".gitignore", "AGENTS.md"]) {
     assert.strictEqual(isAllowedPath(p, GATE_WS), true, p + " must be writable");
   }
   assert.strictEqual(isAllowedPath("docs/README.md", GATE_WS), true);
