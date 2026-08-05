@@ -267,10 +267,11 @@ export class StateEngine {
           `Write the structured artifact to disk — marking the criterion met is not enough; the record must survive the session and be inspectable later.`
         );
       } else if (def.artifact && def.artifactRows && this.countArtifactRows(def.artifact, def.artifactRows.pattern) < def.artifactRows.count) {
+        const eg = def.artifactRows.example ? `, e.g. '${def.artifactRows.example}'` : "";
         out.push(
-          `[Phase ${phase}] ${def.criterion}: specs/${def.artifact} exists but is not in the required findings-table form ` +
-          `(needs at least ${def.artifactRows.count} finding row(s) with an id, e.g. 'P-01 | auth | Security | 🔴 | …'). ` +
-          `A severity-only grid cannot be analysed — each finding needs its own id so overlap can be told from orthogonality.`
+          `[Phase ${phase}] ${def.criterion}: specs/${def.artifact} exists but is not in the required structured form ` +
+          `(needs at least ${def.artifactRows.count} table row(s) with an id${eg}). ` +
+          `A prose or id-less file cannot be machine-read — each row needs its own id.`
         );
       }
       if (def.verify === "test-pass" && !this.witnessedTestPass(phase)) {

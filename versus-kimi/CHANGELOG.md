@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1] - 2026-08-05
+
+### Fixed
+- **The structural gate showed the wrong artifact's example.** One message served every criterion with `artifactRows`, and it was written in findings-table terms — so a missing **module** table in `architecture.md` told the model to write `'P-01 | auth | Security | 🔴 | …'`, a findings row, into the architecture file. Obeying the message would have produced the wrong artifact. `artifactRows` gained an `example` field, each criterion carries the example of its own format, and the shared wording is now neutral ("structured form", "table row(s) with an id"). Phase 1 failures cite `M-01 | rate-limiter | …`; Phase 2 failures cite `P-01 | auth | Security | …`.
+
+This was the wart declared in 0.4.0's release note rather than papered over, and it is now fixed upstream (Versus Claude 0.12.3) instead of locally — so this build stays byte-convergent with the reference. 67 tests, exit 0; two ported tests still asserted the old message text and failed on the first run, caught by the exit code.
+
 ## [0.4.0] - 2026-08-05
 
 ### Changed
