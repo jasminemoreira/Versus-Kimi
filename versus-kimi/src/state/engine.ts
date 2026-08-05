@@ -230,6 +230,20 @@ export class StateEngine {
     }
   }
 
+  /** How many lines of a specs/ artifact match `pattern`. Used for structural
+   *  gates (e.g. per-finding rows in the coverage matrix). Form, not content. */
+  countArtifactRows(relPath: string, pattern: string): number {
+    try {
+      const full = path.join(this.specsPath, relPath);
+      if (!fs.existsSync(full)) return 0;
+      const text = fs.readFileSync(full, "utf-8");
+      const re = new RegExp(pattern, "gm");
+      return (text.match(re) || []).length;
+    } catch {
+      return 0;
+    }
+  }
+
   /** True if the test-outcome hook witnessed a passing run in `phase`. Gates
    *  tests_passing: the engine saw the green run, it was not merely asserted. */
   witnessedTestPass(phase: number): boolean {
@@ -251,6 +265,12 @@ export class StateEngine {
         out.push(
           `[Phase ${phase}] ${def.criterion}: required artifact specs/${def.artifact} is missing or empty. ` +
           `Write the structured artifact to disk — marking the criterion met is not enough; the record must survive the session and be inspectable later.`
+        );
+      } else if (def.artifact && def.artifactRows && this.countArtifactRows(def.artifact, def.artifactRows.pattern) < def.artifactRows.count) {
+        out.push(
+          `[Phase ${phase}] ${def.criterion}: specs/${def.artifact} exists but is not in the required structured form ` +
+          `(found fewer than ${def.artifactRows.count} rows matching the finding-id format 'ID | module | lens | severity | …', e.g. 'P-01 | auth | Security | 🔴 | …'). ` +
+          `A severity-only grid cannot be analysed — each finding needs its own id so overlap can be told from orthogonality.`
         );
       }
       if (def.verify === "test-pass" && !this.witnessedTestPass(phase)) {

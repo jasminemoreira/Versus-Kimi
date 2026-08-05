@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0] - 2026-08-05
+
+### Changed
+- **The coverage matrix is a findings table, and the gate checks its shape.** A module×lens grid of severities records that something was found, not *what* — so two lenses hitting the same defect look identical to two lenses hitting different ones, and a post-mortem cannot tell overlap from orthogonality. `specs/design/coverage-matrix.md` is now one row per finding (`id | module | lens | severity | description`), each with a unique in-project id and `duplica: <id>` when it is a defect another lens already recorded. `coverage_matrix` gained `artifactRows`, so the engine requires at least three rows carrying a finding id before `advance_phase()` to Phase 3 opens — an existing file in the old grid form no longer passes. Phase 3 now resolves findings **by id**. The engine checks the form only: whether a finding is real, or a `duplica` mark honest, stays a human judgment. You may still display a readable grid in chat; the persisted file is the findings table.
+
+Ported from Versus Claude 0.12.0. `engine.ts` and `phases.ts` diffed clean against the Kimi build (pure additions) and were taken wholesale; the Phase 2 and Phase 3 guidance blocks were replaced by hand, since this file carries the chat-template questions and the switch-point decisions. 64 tests. Verified end to end: no file blocks, a severity-only grid blocks naming the required format, a findings table with ids releases.
+
 ## [0.2.0] - 2026-08-01
 
 ### Added
