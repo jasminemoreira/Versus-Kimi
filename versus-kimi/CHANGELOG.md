@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.2] - 2026-08-05
+
+### Fixed
+- **The coverage-matrix gate accepted module rows as findings.** Making Phase 1 write `M-01` module ids opened a hole in Phase 2: the matrix pattern `[A-Za-z]{1,4}-\d+` matches `M-01`, because `M` fits in `{1,4}`. A matrix that was nothing but an echo of the architecture table — zero findings — therefore passed the gate, and with `count: 1` a single copied `| M-01 | … |` row was enough. A findings table with no finding is precisely the case the gate exists to reject. The pattern now carries a negative lookahead, `(?!M-)`: `P-01`, `A-03` and `MEC-01` still match, only `M-\d+` is excluded.
+- **`M-` is reserved for modules in the guidance.** The lookahead alone sets a trap: Mechanical Engineering is one of the 19 lenses, and a model picking `M-` as its prefix would have its findings silently dropped from the count — and, downstream, be indistinguishable from modules. Phase 2's rules paragraph now states the reservation and points that lens at `MEC-`.
+
+Two builds' features interacting, not either one alone — the kind of defect that only appears once both are installed. Ported from Versus Claude 0.12.4. Verified end to end: a matrix that echoes the module table blocks; a `MEC-01` finding releases. 67 tests, exit 0.
+
 ## [0.4.1] - 2026-08-05
 
 ### Fixed
