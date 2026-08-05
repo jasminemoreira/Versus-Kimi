@@ -13,6 +13,21 @@ export interface ExitCriterionDef {
   criterion: string;
   description: string;
   required: boolean;  // required to advance
+  /**
+   * Relative path under specs/ that must exist and be non-trivial for this
+   * criterion to pass. Turns a stampable boolean into a persisted, inspectable
+   * artifact: the gate can still be stamped, but the record survives the session
+   * and is auditable after a failure. Existence is mechanized; quality stays a
+   * human judgment (the oracle cannot be mechanized).
+   */
+  artifact?: string;
+  /**
+   * Mechanical verification the engine performs, beyond the boolean mark.
+   * "test-pass" — the test-outcome hook must have witnessed a passing run in this
+   * phase (S4: never assume tests passed). Like `artifact`, it mechanizes only the
+   * observable fact, not the quality of the tests.
+   */
+  verify?: "test-pass";
 }
 
 export const PHASE_DEFINITIONS: PhaseDefinition[] = [
@@ -93,14 +108,14 @@ export const EXIT_CRITERIA: ExitCriterionDef[] = [
   { phase: 1, criterion: "interfaces_defined", description: "Interfaces defined (signatures, I/O types)", required: true },
   { phase: 1, criterion: "dependencies_explicit", description: "Dependencies between modules explicit", required: true },
   { phase: 1, criterion: "assumptions_listed", description: "Assumptions listed", required: true },
-  { phase: 1, criterion: "architecture_doc", description: "Architecture doc fits in ~2k tokens", required: true },
+  { phase: 1, criterion: "architecture_doc", description: "Architecture doc (~2k tokens: modules, interfaces, dependencies, assumptions) written to specs/technical/architecture.md, keyed by module name", required: true, artifact: "technical/architecture.md" },
   { phase: 1, criterion: "tech_100_scope", description: "Tech supports 100% of scope, tech assumptions verified", required: true },
   { phase: 1, criterion: "modules_adherent_patterns", description: "Modules adherent to chosen patterns", required: true },
 
   // Phase 2
   { phase: 2, criterion: "activated_lenses_recorded", description: "Activated conditional lenses recorded via record_decision(category='architecture') with justification for each non-activated lens — includes 8 situational lenses and 4 Domain Transfer Lenses (Control Engineering, Game Theory, Linguistics/Grammar, Mechanical Engineering)", required: true },
   { phase: 2, criterion: "lenses_applied", description: "All 7 universal lenses + all activated conditional lenses applied to each module (no lens skipped — absence of findings is a valid result)", required: true },
-  { phase: 2, criterion: "coverage_matrix", description: "Coverage matrix modules x lenses (all applied lenses as columns)", required: true },
+  { phase: 2, criterion: "coverage_matrix", description: "Coverage matrix modules x lenses (all applied lenses as columns), written to specs/design/coverage-matrix.md — keyed by module so a later failure can be traced to the lens that should have caught it", required: true, artifact: "design/coverage-matrix.md" },
   { phase: 2, criterion: "criticals_identified", description: "Critical findings identified and classified", required: true },
   { phase: 2, criterion: "concentration_analyzed", description: "Concentration analysis performed (by module and by lens)", required: true },
 
@@ -121,13 +136,13 @@ export const EXIT_CRITERIA: ExitCriterionDef[] = [
   { phase: 5, criterion: "ui_runnable", description: "Smoke test: user runs P0 end-to-end", required: true },
 
   // Phase 6
-  { phase: 6, criterion: "tests_passing", description: "100% tests passing", required: true },
+  { phase: 6, criterion: "tests_passing", description: "100% tests passing — the test-outcome hook must have witnessed a green run in Phase 6 (S4: execute and verify, do not assume)", required: true, verify: "test-pass" },
   { phase: 6, criterion: "manual_testing", description: "Manual exploratory testing performed", required: true },
   { phase: 6, criterion: "edge_cases", description: "Edge cases tested", required: true },
 
   // Phase 7
   { phase: 7, criterion: "specs_updated", description: "specs/ updated with results", required: true },
-  { phase: 7, criterion: "lessons_documented", description: "Lessons learned documented", required: true },
+  { phase: 7, criterion: "lessons_documented", description: "Lessons learned written to specs/references/lessons.md — the persisted record that feeds the next cycle", required: true, artifact: "references/lessons.md" },
   { phase: 7, criterion: "human_feedback", description: "Human feedback collected", required: true },
 ];
 

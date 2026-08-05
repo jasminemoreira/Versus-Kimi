@@ -13,6 +13,9 @@ export interface PhaseState {
   exitCriteria: ExitCriterionState[];
   safeguards: SafeguardState[];
   loopCounter: LoopCounter;
+  /** Last test run the test-outcome hook actually witnessed. Gates tests_passing:
+   *  the engine must have seen a green run in the phase, not just be told it passed. */
+  lastTestOutcome?: { outcome: "pass" | "fail"; phase: number; at: string };
   lastPhaseStateCheck?: string;  // ISO timestamp — gateway guard for smaller models
   createdAt: string;             // ISO timestamp
   updatedAt: string;

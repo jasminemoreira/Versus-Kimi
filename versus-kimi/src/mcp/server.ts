@@ -62,6 +62,11 @@ async function main() {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     try {
+      // Reload before every call: the hooks run in separate processes and write
+      // state.json behind this server's back — the loop counter and the pass the
+      // test-outcome hook witnessed. The engine saves after every mutation, so
+      // disk is authoritative; reloading only picks up out-of-process writes.
+      engine.load();
       const result = handleToolCall(name, (args ?? {}) as Record<string, unknown>, engine);
       return {
         content: [{ type: "text" as const, text: result }],

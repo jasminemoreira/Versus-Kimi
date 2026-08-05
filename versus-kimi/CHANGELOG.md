@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0] - 2026-08-01
+
+### Added
+- **Exit gates require persisted or witnessed evidence, not a boolean.** Four required criteria could be marked met with nothing behind them, and the record died with the chat. They now demand a trace the engine can inspect: `architecture_doc` needs `specs/technical/architecture.md`, `coverage_matrix` needs `specs/design/coverage-matrix.md`, `lessons_documented` needs `specs/references/lessons.md` (each existing with ≥80 non-whitespace characters), and `tests_passing` needs a green run the `test-outcome` hook actually witnessed **in Phase 6** — a stamped criterion no longer opens `advance_phase()` or `start_new_cycle()`. The engine checks existence and observation, never quality: whether the architecture is good stays a human judgment. Phases 1, 2, 3, 5, 6 and 7 of the guidance were updated to say where each artifact goes and that the gate is shut until it does, and Phase 3 now works from the persisted matrix instead of chat recall.
+- **The MCP server reloads state before every tool call.** It loaded once at startup, but the hooks write `state.json` from separate processes — the loop counter and the witnessed test result. Without the reload, `tests_passing` would never see the green run the hook had just recorded. The engine saves after every mutation, so disk is authoritative.
+
+### Note for this build
+The witnessed-pass gate depends on a hook seeing the run, which makes the Phase 6 guidance about foreground execution load-bearing rather than advisory: Kimi's `Bash` defaults to a 60-second foreground timeout and moves the command to the background on expiry, and a backgrounded run is never witnessed — the gate would stay shut with the suite passing. Phase 6 now says so at the point of use.
+
+Ported from Versus Claude 0.11.0. `engine.ts` and `phases.ts` were identical pre-patch and were taken wholesale; `types.ts`, `mcp/server.ts` and `full-guidance.ts` carry Kimi-specific changes and were patched by hand.
+
 ## [0.1.1] - 2026-08-01
 
 ### Fixed

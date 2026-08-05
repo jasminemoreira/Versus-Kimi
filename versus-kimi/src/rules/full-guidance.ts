@@ -359,6 +359,9 @@ After user confirms architecture, call update_project_spec() with:
 - constraints: hard constraints that must survive model switches (e.g., ["Claude-only", "no external auth providers"])
 This structured context is injected before every message in all phases — it is the primary mechanism for enforcing P1 decisions across sessions.
 
+### Exit: Persist the architecture document (MANDATORY — the gate requires the file)
+Write the architecture document to \`specs/technical/architecture.md\`: the ~2k-token doc a Phase 5 session needs to implement each module in isolation — modules with responsibilities, interfaces (signatures, I/O types), dependencies between them, and the assumptions listed. Key each module by a stable name; Phase 2's coverage matrix and Phase 5's implementation will reference those same names. \`advance_phase()\` to Phase 2 is BLOCKED until \`specs/technical/architecture.md\` exists and is non-trivial — marking architecture_doc met is not enough. As with the coverage matrix: the engine checks that the record exists and survives the session, not that the architecture is good (that is your and the user's judgment).
+
 Then call advance_phase() to move to Phase 2. Then call get_phase_guidance() and begin Phase 2 immediately: record activated lenses and start the adversarial critique.`;
 
 // [G2] Critique-response asymmetry + [G3] Concentration analysis + [G8] AV types + [G10] Gate criteria
@@ -412,6 +415,8 @@ Conditional lens activation: review ProjectSpec (stack, constraints, out-of-scop
 ### Coverage Matrix (mandatory) (⚠️ MUST DISPLAY complete table in chat — do NOT summarize or skip modules/lenses):
 Table of modules × lenses (universal + activated conditional) with severities.
 
+**PERSIST IT — the criterion is not met until the file exists.** Write the matrix to \`specs/design/coverage-matrix.md\` as a real table: one ROW per module, one COLUMN per applied lens, each cell the severity (🔴/🟡/🟢 or none) plus a one-line note. Key every row by the exact module name from Phase 1 — this is what lets a later failure be traced back to the lens that should have caught it. \`advance_phase()\` to Phase 3 is BLOCKED until \`specs/design/coverage-matrix.md\` exists and is non-trivial; marking coverage_matrix met is not enough. The point is not that the engine judges the matrix (it cannot — quality is your and the user's judgment); it is that the matrix survives the session as an inspectable, auditable record instead of dying in the chat.
+
 ### Concentration analysis (MANDATORY after the matrix) (⚠️ MUST DISPLAY analysis in chat):
 - **Concentration by module:** Module with findings across ALL lenses → probably poorly conceived → requires REDESIGN, not patch.
 - **Concentration by lens:** Lens with findings across ALL modules → SYSTEMIC failure (e.g.: no parameter has a reference, no module testable in isolation).
@@ -444,6 +449,9 @@ Phase 2 attacked with MULTIPLE lenses. Phase 3 responds with UNIFIED VISION.
 Individually correct corrections may be systemically contradictory.
 Integrate all responses into the whole — don't correct module by module in isolation.
 Trade-offs resolved by the HUMAN OPERATOR (S2: stopping criterion is the user's).
+
+### Step 0 — Read the persisted coverage matrix (MANDATORY, before addressing anything):
+Read \`specs/design/coverage-matrix.md\` — the artifact Phase 2 wrote. Do NOT work from memory of the chat: the matrix is the record of what was examined and where the findings concentrate, keyed by module. Address the 🔴 criticals and 🟡 important findings row by row against that file. This is the asset being acted on, not just stored — and working from the file (not recall) is what makes the eventual audit trail honest.
 
 ### Purpose: Simplify V(N) → V(N+1), eliminating complexity.
 **CAUTION AP2 (Complexity as false solution):** Each iteration must SIMPLIFY, not complexify.
@@ -526,7 +534,7 @@ Inform the user: "The architecture is fully validated. From Phase 5 onward, you 
    This is a DECISION, not a notice. Do NOT write "I am advancing to Phase 5; interrupt me if you want to switch" — announcing and proceeding puts the burden of interrupting on the user, at the one moment where the choice is cheapest to make. It is only free BEFORE any code exists: once Phase 5 has written files, switching means abandoning a session mid-implementation.
 3. Call advance_phase() to move to Phase 5 — in BOTH cases. Phase 4's gate is already satisfied; a new session should resume at Phase 5, not re-run the convergence check.
 4. If the user chose "Switch model": call record_decision(phase=4, category='process', content='LLM SWITCH: user will resume Phase 5 in a new chat with <model>') and STOP your response. Do not start implementing.
-5. If the user chose "Continue here": call get_phase_guidance() and begin Phase 5 implementation immediately: consult specs/ for the first module and start coding.`;
+5. If the user chose "Continue here": call get_phase_guidance() and begin Phase 5 implementation immediately: read \`specs/technical/architecture.md\` (the Phase 1 artifact) for the first module — its interface, dependencies and assumptions — then consult the rest of specs/ and start coding. Work from the persisted doc, not chat recall.`;
 
 // [G6] decoupled sessions + [G8] AV types
 const PHASE_5_GUIDANCE = `## Phase 5 — Code Implementation
@@ -759,7 +767,9 @@ After each fix, record a testing decision noting: what was fixed, what still nee
 This ensures the NEXT session knows exactly what changed since the last test round.
 
 ### Next Step (MANDATORY when all testing is complete):
-Both automated and manual testing must be done before advancing. When both gates are ✅: call advance_phase() to move to Phase 7. Then call get_phase_guidance() and begin Phase 7 post-review immediately.`;
+Both automated and manual testing must be done before advancing. When both gates are ✅: call advance_phase() to move to Phase 7. Then call get_phase_guidance() and begin Phase 7 post-review immediately.
+
+**tests_passing is engine-witnessed, not asserted (S4).** advance_phase() to Phase 7 is BLOCKED unless the test-outcome hook actually saw a GREEN run during Phase 6 — marking tests_passing met is not enough. Run the full suite here (a recognized command: npm test, jest, pytest, cargo test, go test, …) and let it pass, in the FOREGROUND with an explicit \`timeout\` — a run that Kimi moves to the background is never witnessed, so the gate stays shut. If you switched sessions/models at Step 0, run the suite again in this session so the engine witnesses it. The engine checks that the run was green, not that the tests are adequate — coverage and meaningfulness are your and the user's judgment.`;
 
 // [G5] Meta-iteration v1→v2 + [G8] AV type
 const PHASE_7_GUIDANCE = `## Phase 7 — Post-Review
@@ -781,6 +791,8 @@ Capture 3-5 lessons about THIS project (not about the methodology):
 - Assumptions from P0/P1 that turned out wrong
 
 Deposit lessons in specs/technical or specs/references — they become valuable input for v2 via start_new_cycle.
+
+Write the lessons to \`specs/references/lessons.md\` — the persisted record that feeds the next cycle. start_new_cycle() is BLOCKED until \`specs/references/lessons.md\` exists and is non-trivial; marking lessons_documented met is not enough. This is what lets a v2 (or a post-mortem) actually read what this cycle learned instead of it vanishing with the chat.
 
 ### Meta-iteration v1.0 → v2.0 (⚠️ MUST DISPLAY offer in chat):
 After completing all Phase 7 steps, you MUST offer the user the option to start a new development cycle in chat (R2 format):

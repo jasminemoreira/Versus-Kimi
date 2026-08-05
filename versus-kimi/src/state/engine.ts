@@ -212,6 +212,58 @@ export class StateEngine {
 
   // --- Transitions ---
 
+  /**
+   * True if a specs/ artifact exists and has non-trivial content. This is the
+   * forensic bar: not "is it good" (the oracle — unmechanizable) but "does a
+   * persisted, inspectable record exist" — so a stamped gate leaves a trace to
+   * audit after a failure instead of vanishing in the chat. relPath is relative
+   * to specs/.
+   */
+  artifactPresent(relPath: string): boolean {
+    try {
+      const full = path.join(this.specsPath, relPath);
+      if (!fs.existsSync(full)) return false;
+      const content = fs.readFileSync(full, "utf-8").replace(/\s/g, "");
+      return content.length >= 80;
+    } catch {
+      return false;
+    }
+  }
+
+  /** True if the test-outcome hook witnessed a passing run in `phase`. Gates
+   *  tests_passing: the engine saw the green run, it was not merely asserted. */
+  witnessedTestPass(phase: number): boolean {
+    const t = this.state?.lastTestOutcome;
+    return !!t && t.outcome === "pass" && t.phase === phase;
+  }
+
+  /**
+   * Messages for required criteria of `phase` whose persisted/witnessed evidence
+   * is missing — empty means all evidence is present. Shared by advancePhase and
+   * startNewCycle so a stamped criterion cannot open either gate without leaving
+   * an inspectable trace. Does NOT judge quality (that is the oracle — human).
+   */
+  private missingEvidence(phase: number): string[] {
+    const out: string[] = [];
+    for (const def of getExitCriteriaForPhase(phase)) {
+      if (!def.required) continue;
+      if (def.artifact && !this.artifactPresent(def.artifact)) {
+        out.push(
+          `[Phase ${phase}] ${def.criterion}: required artifact specs/${def.artifact} is missing or empty. ` +
+          `Write the structured artifact to disk — marking the criterion met is not enough; the record must survive the session and be inspectable later.`
+        );
+      }
+      if (def.verify === "test-pass" && !this.witnessedTestPass(phase)) {
+        out.push(
+          `[Phase ${phase}] ${def.criterion}: the engine did not witness a passing test run in this phase. ` +
+          `Run your test suite so the result is verified by the test-outcome hook (S4: never assume tests passed — execute and verify). ` +
+          `Marking the criterion met is not enough.`
+        );
+      }
+    }
+    return out;
+  }
+
   advancePhase(targetPhase: number): Result<void, TransitionError> {
     if (!this.state) {
       return { ok: false, error: { message: "Project not initialized.", missingCriteria: [] } };
@@ -239,12 +291,18 @@ export class StateEngine {
       }
     }
 
-    if (!validation.valid) {
+    // Evidence gate: some required criteria must leave a persisted artifact or a
+    // witnessed test result — the boolean mark alone does not satisfy them. This
+    // is what makes a stamped gate auditable after a failure instead of vanishing
+    // in the chat. Quality stays a human judgment; existence and observation do not.
+    const artifactMissing = this.missingEvidence(from);
+
+    if (!validation.valid || artifactMissing.length > 0) {
       return {
         ok: false,
         error: {
           message: `Cannot advance from Phase ${from} to Phase ${targetPhase}.`,
-          missingCriteria: validation.missingCriteria,
+          missingCriteria: [...validation.missingCriteria, ...artifactMissing],
           safeguardViolations: validation.safeguardViolations,
           specsWarnings,
         },
@@ -445,8 +503,16 @@ export class StateEngine {
   recordTestOutcome(command: string, failed: boolean): { count: number } {
     if (!this.state) return { count: 0 };
 
+    // Record what the engine actually witnessed — this is what gates tests_passing
+    // (S4), independent of the S6 loop-counter logic below.
+    this.state.lastTestOutcome = {
+      outcome: failed ? "fail" : "pass",
+      phase: this.state.currentPhase,
+      at: new Date().toISOString(),
+    };
+
     if (!failed) {
-      this.resetLoopCounter();
+      this.resetLoopCounter();  // resetLoopCounter saves, persisting lastTestOutcome too
       return { count: 0 };
     }
 
@@ -555,6 +621,14 @@ export class StateEngine {
     const unmet = p7Criteria.filter((c) => !c.met);
     if (unmet.length > 0) {
       return { ok: false, error: `Phase 7 exit criteria not met: ${unmet.map((c) => c.criterion).join(", ")}. Complete Post-Review before starting new cycle.` };
+    }
+
+    // Evidence gate (same as advancePhase): a stamped P7 criterion cannot open the
+    // new cycle without its persisted artifact — e.g. lessons_documented must exist
+    // as a file, so the record that feeds the next cycle survives the session.
+    const missing = this.missingEvidence(7);
+    if (missing.length > 0) {
+      return { ok: false, error: missing.join(" ") };
     }
 
     // Count completed cycles from history (how many times we've reached phase 7)

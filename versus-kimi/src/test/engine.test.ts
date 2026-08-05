@@ -225,6 +225,8 @@ test("advancePhase blocks invalid transition (0→2)", () => {
 
 test("loop Phase 2↔3 allowed", () => {
   engine.initProject("Test", "Desc");
+  writeArchitectureDoc(workspace);
+  writeCoverageMatrix(workspace);
   // Fast-forward to Phase 2
   engine.updateScore(95, makeFullBreakdown(95));
   for (const c of engine.getExitCriteriaWithDefs(0)) engine.markExitCriterion(0, c.criterion, true);
@@ -366,9 +368,50 @@ test("LLM switch + retomar Versus terms present", () => {
 console.log("\n=== S6 Loop Detection Tests ===\n");
 
 /** Fast-forward a fresh project to Phase 5 (where S6 loop detection is active). */
+function writeCoverageMatrix(ws: string): void {
+  const content =
+    "# Coverage Matrix\n\n" +
+    "| module | correctness | security | performance |\n" +
+    "|---|---|---|---|\n" +
+    "| auth | 🟢 | 🔴 sql-injection in login | 🟢 |\n" +
+    "| ui   | 🟡 missing input validation | 🟢 | 🟢 |\n";
+  fs.writeFileSync(path.join(ws, "specs", "design", "coverage-matrix.md"), content);
+}
+
+/** Writes a non-trivial architecture doc so Phase 1 can advance. */
+function writeArchitectureDoc(ws: string): void {
+  const content =
+    "# Architecture\n\n" +
+    "## auth\nResponsibility: authenticate users. Interface: login(user, pass) -> Session. Depends on: db.\n\n" +
+    "## ui\nResponsibility: render views. Interface: render(state) -> DOM. Depends on: auth.\n\n" +
+    "## Assumptions\n- single-threaded runtime\n";
+  fs.writeFileSync(path.join(ws, "specs", "technical", "architecture.md"), content);
+}
+
+function toPhase2Stamped() {
+  engine.initProject("Test", "Desc");
+  engine.updateScore(95, makeFullBreakdown(95));
+  for (const c of engine.getExitCriteriaWithDefs(0)) engine.markExitCriterion(0, c.criterion, true);
+  engine.advancePhase(1);
+  for (const c of engine.getExitCriteriaWithDefs(1)) engine.markExitCriterion(1, c.criterion, true);
+  writeArchitectureDoc(workspace);
+  engine.advancePhase(2);
+  for (const c of engine.getExitCriteriaWithDefs(2)) engine.markExitCriterion(2, c.criterion, true);
+  assert.strictEqual(engine.getPhaseState()!.currentPhase, 2);
+}
+
+function toPhase6() {
+  toPhase5();
+  for (const c of engine.getExitCriteriaWithDefs(5)) engine.markExitCriterion(5, c.criterion, true);
+  engine.advancePhase(6);
+  assert.strictEqual(engine.getPhaseState()!.currentPhase, 6);
+}
+
 function toPhase5() {
   engine.initProject("Test", "Desc");
   engine.updateScore(95, makeFullBreakdown(95));
+  writeArchitectureDoc(workspace); // Phase 1→2 gate requires the persisted artifact
+  writeCoverageMatrix(workspace); // Phase 2→3 gate requires the persisted artifact
   for (let p = 0; p <= 4; p++) {
     for (const c of engine.getExitCriteriaWithDefs(p)) engine.markExitCriterion(p, c.criterion, true);
     engine.advancePhase(p + 1);
@@ -506,6 +549,106 @@ test("detectOutcome: ambiguous output records nothing", () => {
   assert.strictEqual(detectOutcome(""), "unknown");
 });
 
+console.log("\n=== Evidence Gate Tests ===\n");
+
+test("coverage_matrix stamped but not persisted BLOCKS advance", () => {
+  toPhase2Stamped();
+  // Every criterion marked met — the stamp — but no artifact on disk.
+  const r = engine.advancePhase(3);
+  assert.strictEqual(r.ok, false);
+  if (r.ok) return;
+  assert.strictEqual(r.error.missingCriteria.length, 1);
+  assert.ok(r.error.missingCriteria[0].includes("coverage-matrix.md"));
+  assert.ok(r.error.missingCriteria[0].includes("marking the criterion met is not enough"));
+});
+test("persisted matrix unblocks the advance", () => {
+  toPhase2Stamped();
+  assert.strictEqual(engine.advancePhase(3).ok, false, "blocked without the file");
+  writeCoverageMatrix(workspace);
+  const r = engine.advancePhase(3);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(engine.getPhaseState()!.currentPhase, 3);
+});
+test("a trivial artifact does not count as persisted", () => {
+  toPhase2Stamped();
+  fs.writeFileSync(path.join(workspace, "specs", "design", "coverage-matrix.md"), "| |\n");
+  const r = engine.advancePhase(3);
+  assert.strictEqual(r.ok, false, "empty/near-empty file must not satisfy the gate");
+});
+test("artifactPresent: existence + non-trivial content", () => {
+  engine.initProject("Test", "Desc");
+  assert.strictEqual(engine.artifactPresent("design/coverage-matrix.md"), false);
+  writeCoverageMatrix(workspace);
+  assert.strictEqual(engine.artifactPresent("design/coverage-matrix.md"), true);
+});
+test("architecture_doc stamped but not persisted BLOCKS P1→P2", () => {
+  engine.initProject("Test", "Desc");
+  engine.updateScore(95, makeFullBreakdown(95));
+  for (const c of engine.getExitCriteriaWithDefs(0)) engine.markExitCriterion(0, c.criterion, true);
+  engine.advancePhase(1);
+  for (const c of engine.getExitCriteriaWithDefs(1)) engine.markExitCriterion(1, c.criterion, true);
+  // All P1 criteria stamped, but no architecture.md on disk.
+  const blocked = engine.advancePhase(2);
+  assert.strictEqual(blocked.ok, false);
+  if (blocked.ok) return;
+  assert.ok(blocked.error.missingCriteria.some((m) => m.includes("technical/architecture.md")));
+
+  writeArchitectureDoc(workspace);
+  const r = engine.advancePhase(2);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(engine.getPhaseState()!.currentPhase, 2);
+});
+test("tests_passing stamped but no witnessed green run BLOCKS P6→P7", () => {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  // All P6 criteria stamped, but the hook never witnessed a pass.
+  const blocked = engine.advancePhase(7);
+  assert.strictEqual(blocked.ok, false);
+  if (blocked.ok) return;
+  assert.ok(blocked.error.missingCriteria.some((m) => m.includes("witness a passing test run")));
+});
+test("a witnessed green run in Phase 6 unblocks P6→P7", () => {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  engine.recordTestOutcome("npm test", false); // the hook witnesses a pass in phase 6
+  const r = engine.advancePhase(7);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(engine.getPhaseState()!.currentPhase, 7);
+});
+test("a witnessed FAIL does not satisfy tests_passing", () => {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  engine.recordTestOutcome("npm test", true); // red run
+  assert.strictEqual(engine.advancePhase(7).ok, false);
+});
+test("a pass witnessed in an EARLIER phase does not satisfy Phase 6", () => {
+  toPhase5();
+  engine.recordTestOutcome("npm test", false); // green run, but in phase 5
+  for (const c of engine.getExitCriteriaWithDefs(5)) engine.markExitCriterion(5, c.criterion, true);
+  engine.advancePhase(6);
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  assert.strictEqual(engine.advancePhase(7).ok, false, "the pass must be witnessed IN phase 6");
+});
+test("start_new_cycle BLOCKED until lessons.md is persisted", () => {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  engine.recordTestOutcome("npm test", false);
+  engine.advancePhase(7);
+  for (const c of engine.getExitCriteriaWithDefs(7)) engine.markExitCriterion(7, c.criterion, true);
+
+  const blocked = engine.startNewCycle();
+  assert.strictEqual(blocked.ok, false);
+  if (blocked.ok) return;
+  assert.ok(String(blocked.error).includes("references/lessons.md"));
+
+  fs.writeFileSync(
+    path.join(workspace, "specs", "references", "lessons.md"),
+    "# Lessons\n\n- The auth module's session TTL assumption from P0 was wrong; refreshed tokens broke it.\n- The chosen ORM lacked batch upsert; had to hand-roll it.\n"
+  );
+  const r = engine.startNewCycle();
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(engine.getPhaseState()!.currentPhase, 0);
+});
 console.log("\n=== Phase Gate Path Tests ===\n");
 
 const GATE_WS = "/home/dev/proj";
