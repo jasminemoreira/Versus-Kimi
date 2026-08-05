@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0] - 2026-08-05
+
+### Changed
+- **`architecture.md` is a module table, and the gate requires it.** Phase 1 asked for a ~2k-token prose document, so the canonical module list — the thing Phase 2's matrix and Phase 5's implementation are supposed to key off — was only readable by a human. It is now one row per module (`M-01 | module | responsibility | interface | depends-on`), and `architecture_doc` carries `artifactRows` with the `M-\d+` pattern, so `advance_phase()` to Phase 2 stays shut until at least one module row exists. A prose doc no longer passes. The id exists only to make the row machine-recognizable; the stable key across phases is the module **name** in column 2.
+- The same `artifactRows` machinery already installed for the coverage matrix serves this — the loop in `advancePhase` is generic, so nothing new was needed in the engine beyond taking Claude's updated wording.
+
+### Known limit, declared
+The gate checks that a module table exists, not that Phase 2 and Phase 5 actually reused those names. Drift (Phase 1 `rate-limiter` → Phase 2 `quota`) is now **detectable** — both artifacts are machine-readable and diffable — but not prevented; no gate cross-checks `matrix.module ∈ architecture.modules`.
+
+### Note on the denial message
+The engine's structural-gate message is shared by both artifacts and reads in findings-table terms, so a missing **module** table is reported with a findings example (`P-01 | auth | Security | 🔴 | …`). The artifact path in the same sentence is correct and Phase 1's guidance shows the module-table format, but the example points at the wrong shape. Kept as-is to stay byte-convergent with Versus Claude 0.12.2, whose implementation this is; the fix belongs upstream, where the example can be keyed to the criterion.
+
+Ported from Versus Claude 0.12.2. `phases.ts` and `engine.ts` diffed clean and were taken wholesale; the Phase 1 guidance block and the test helper were replaced by hand. 67 tests, exit 0.
+
 ## [0.3.1] - 2026-08-05
 
 ### Changed

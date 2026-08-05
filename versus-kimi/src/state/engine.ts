@@ -268,8 +268,8 @@ export class StateEngine {
         );
       } else if (def.artifact && def.artifactRows && this.countArtifactRows(def.artifact, def.artifactRows.pattern) < def.artifactRows.count) {
         out.push(
-          `[Phase ${phase}] ${def.criterion}: specs/${def.artifact} exists but is not in the required structured form ` +
-          `(found fewer than ${def.artifactRows.count} rows matching the finding-id format 'ID | module | lens | severity | …', e.g. 'P-01 | auth | Security | 🔴 | …'). ` +
+          `[Phase ${phase}] ${def.criterion}: specs/${def.artifact} exists but is not in the required findings-table form ` +
+          `(needs at least ${def.artifactRows.count} finding row(s) with an id, e.g. 'P-01 | auth | Security | 🔴 | …'). ` +
           `A severity-only grid cannot be analysed — each finding needs its own id so overlap can be told from orthogonality.`
         );
       }

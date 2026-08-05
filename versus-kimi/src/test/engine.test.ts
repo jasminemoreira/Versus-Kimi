@@ -393,8 +393,10 @@ function writeSeverityGrid(ws: string): void {
 function writeArchitectureDoc(ws: string): void {
   const content =
     "# Architecture\n\n" +
-    "## auth\nResponsibility: authenticate users. Interface: login(user, pass) -> Session. Depends on: db.\n\n" +
-    "## ui\nResponsibility: render views. Interface: render(state) -> DOM. Depends on: auth.\n\n" +
+    "| id | module | responsibility | interface | depends-on |\n" +
+    "|------|--------|----------------|-----------|------------|\n" +
+    "| M-01 | auth | authenticate users | login(user, pass) -> Session | db |\n" +
+    "| M-02 | ui   | render views | render(state) -> DOM | auth |\n\n" +
     "## Assumptions\n- single-threaded runtime\n";
   fs.writeFileSync(path.join(ws, "specs", "technical", "architecture.md"), content);
 }
@@ -592,7 +594,7 @@ test("a severity grid without per-finding ids BLOCKS (structural gate)", () => {
   const r = engine.advancePhase(3);
   assert.strictEqual(r.ok, false);
   if (r.ok) return;
-  assert.ok(r.error.missingCriteria[0].includes("finding-id format"));
+  assert.ok(r.error.missingCriteria[0].includes("findings-table form"));
 
   writeCoverageMatrix(workspace); // proper findings table
   assert.strictEqual(engine.advancePhase(3).ok, true);
@@ -604,6 +606,34 @@ test("countArtifactRows counts finding rows, not grid rows", () => {
   assert.strictEqual(engine.countArtifactRows("design/coverage-matrix.md", pat), 0);
   writeCoverageMatrix(workspace);
   assert.strictEqual(engine.countArtifactRows("design/coverage-matrix.md", pat), 3);
+});test("a prose architecture (no module table) BLOCKS P1→P2", () => {
+  engine.initProject("Test", "Desc");
+  engine.updateScore(95, makeFullBreakdown(95));
+  for (const c of engine.getExitCriteriaWithDefs(0)) engine.markExitCriterion(0, c.criterion, true);
+  engine.advancePhase(1);
+  for (const c of engine.getExitCriteriaWithDefs(1)) engine.markExitCriterion(1, c.criterion, true);
+  // Non-trivial prose, but no | M-01 | module rows.
+  fs.writeFileSync(
+    path.join(workspace, "specs", "technical", "architecture.md"),
+    "# Architecture\n\nThe system has an auth module that authenticates users against the db, " +
+    "and a ui module that renders views and depends on auth. Assumes a single-threaded runtime.\n"
+  );
+  const blocked = engine.advancePhase(2);
+  assert.strictEqual(blocked.ok, false, "prose must not satisfy the module-table gate");
+  if (blocked.ok) return;
+  assert.ok(blocked.error.missingCriteria.some((m) => m.includes("findings-table form") || m.includes("architecture.md")));
+
+  writeArchitectureDoc(workspace); // proper module table
+  assert.strictEqual(engine.advancePhase(2).ok, true);
+});
+test("a single finding row satisfies the gate (no ≥3 floor)", () => {
+  toPhase2Stamped();
+  fs.writeFileSync(
+    path.join(workspace, "specs", "design", "coverage-matrix.md"),
+    "# Findings\n\n| id | module | lens | severity | description |\n|---|---|---|---|---|\n" +
+    "| P-01 | auth | Security | 🔴 | the one finding this simple design has: token never expires |\n"
+  );
+  assert.strictEqual(engine.advancePhase(3).ok, true, "one real finding is enough — the gate must not impose a count floor");
 });test("artifactPresent: existence + non-trivial content", () => {
   engine.initProject("Test", "Desc");
   assert.strictEqual(engine.artifactPresent("design/coverage-matrix.md"), false);
