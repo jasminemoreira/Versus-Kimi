@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1] - 2026-08-06
+
+### Changed
+- **Item 7's wording aligned to the canonical text.** The rule shipped in 0.5.0 said the same thing in different words; it now reads exactly as specified, naming why it matters — a lens double-counting one defect inflates its own exclusive contribution, which is the quantity the study measures. Keeps the four builds convergent on the sentence, with the `duplica` token literal.
+
+No behaviour change; 74 tests, exit 0.
+
 ## [0.5.0] - 2026-08-06
 
 Implements the seven corrections requested in `RO3/CORRECOES-EXTENSAO.md` — a contract written by the consumer of this data (the RO3 analysis scripts), not a port of an upstream patch. **This build now diverges from Versus Claude 0.12.5**; `engine.ts`, `phases.ts` and `types.ts` can no longer be copied wholesale from it without diffing.
