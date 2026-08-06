@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0] - 2026-08-06
+
+### Removed
+- **The cross-check `matrix.module ⊆ architecture.modules` (RO3 item 6) is deferred.** It shipped in 0.5.0 because the request document specified it in full; the item was in fact meant to be held back, so that no project of the batch is blocked by a rule the analysis side is not yet ready to consume. Gone: `crossCheckMatrixModules()`, `architectureModules()`, their two tests and the `writeArchVersions` helper. The RO3 parser already validates this, so nothing is left unchecked — only unenforced.
+- Removing it is reversible: the implementation, including the `quota-limiter` tolerance case that made earlier iterations pass, is in the 0.5.0 commit.
+
+### Kept
+- **Item 5's gate stays.** The two lived in one method; only the module comparison was taken out. From iteration 2 on, a matrix with no `## Iteração N` header still blocks — that failure is silent otherwise, with every finding read as iteration 1.
+- Items 1, 2, 3, 4, 5 and 7 are untouched.
+
+72 tests, exit 0. Verified: a matrix naming a module absent from the architecture table now advances.
+
 ## [0.5.1] - 2026-08-06
 
 ### Changed

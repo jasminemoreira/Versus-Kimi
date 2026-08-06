@@ -255,34 +255,7 @@ export class StateEngine {
   }
 
 
-  /**
-   * Module names declared in the architecture doc, split by version section.
-   *
-   * Phase 3 appends `## V(N+1)` rather than overwriting, so the doc holds every
-   * version the design passed through. `all` is the union — the names any finding
-   * ever legitimately referenced; `last` is the version now in force.
-   */
-  architectureModules(relPath = "technical/architecture.md"): { all: Set<string>; last: Set<string> } {
-    const all = new Set<string>();
-    let last = new Set<string>();
-    try {
-      const full = path.join(this.specsPath, relPath);
-      if (!fs.existsSync(full)) return { all, last };
-      for (const line of fs.readFileSync(full, "utf-8").split("\n")) {
-        if (/^\s*##\s/.test(line) && /\bV\s*\(?\d+\)?/i.test(line)) {
-          last = new Set<string>();          // a new version section starts here
-          continue;
-        }
-        const row = line.match(/^\s*\|\s*M-\d+\s*\|\s*([^|]+?)\s*\|/);
-        if (!row) continue;
-        const name = row[1].trim().toLowerCase();
-        if (!name) continue;
-        all.add(name);
-        last.add(name);
-      }
-    } catch { /* unreadable — treat as empty */ }
-    return { all, last: last.size > 0 ? last : all };
-  }
+
 
   /**
    * Finding rows of the coverage matrix, grouped by the iteration section they sit
@@ -323,7 +296,18 @@ export class StateEngine {
    * names a module V(2) removed — a naive check would block every project whose
    * design evolved, which is the normal case, not the exception.
    */
-  private crossCheckMatrixModules(): string[] {
+  /**
+   * Phase 2 gate: from iteration 2 on, the coverage matrix must head each round
+   * with its iteration. Without the header every finding is silently read as
+   * iteration 1 and the link between a finding and the architecture it was made
+   * against is lost — and silence is exactly what a gate is for.
+   *
+   * This checks the header only. Cross-checking that each finding's module exists
+   * in the architecture table is deliberately NOT done here: it is deferred, so
+   * that a project of the batch is never blocked by a rule the analysis side is
+   * not yet ready to consume.
+   */
+  private requireIterationHeader(): string[] {
     const out: string[] = [];
     const groups = this.matrixFindingsByIteration();
     if (groups.length === 0) return out;
@@ -335,24 +319,10 @@ export class StateEngine {
         `has no iteration section header — every finding would silently be read as iteration 1. ` +
         `Head each round's rows with '## Iteração N — V(N)' (or '## Iteration N') so a finding can be traced to the architecture it was made against.`
       );
-      return out;
-    }
-
-    const arch = this.architectureModules();
-    if (arch.all.size === 0) return out;   // no module table to check against
-
-    const currentGroup = groups.reduce((a, b) => (b.iteration >= a.iteration ? b : a));
-    const unknown = [...new Set(currentGroup.modules)].filter((m) => !arch.last.has(m));
-    if (unknown.length > 0) {
-      out.push(
-        `[Phase 2] coverage_matrix: iteration ${currentGroup.iteration} names module(s) absent from the current architecture version: ` +
-        `${unknown.join(", ")}. Every module a finding cites must appear in the module table of the version in force ` +
-        `(specs/technical/architecture.md) — otherwise the finding cannot be traced back to a design. ` +
-        `Findings from earlier iterations may name modules that were later removed; those are not checked.`
-      );
     }
     return out;
   }
+
 
   /**
    * Messages for required criteria of `phase` whose persisted/witnessed evidence
@@ -385,7 +355,7 @@ export class StateEngine {
         );
       }
     }
-    if (phase === 2) out.push(...this.crossCheckMatrixModules());
+    if (phase === 2) out.push(...this.requireIterationHeader());
 
     return out;
   }
