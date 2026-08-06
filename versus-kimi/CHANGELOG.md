@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3] - 2026-08-05
+
+### Changed
+- **Phase 3 appends `## V(N+1)` to the architecture doc instead of overwriting it.** The Phase 2↔3 loop critiques a different architecture each round, so a finding recorded in iteration 1 can name a module that V(2) removed. Overwriting the module table left that finding pointing at a module no artifact records any more — the per-module traceability the coverage matrix exists to provide broke exactly where the design changed most. Every version is kept now; the last section is the current one. Observed for real in pilot T01 (`quota-limiter`).
+
+Guidance only — no engine change, no gate, no test count change (67, exit 0). Ported from Versus Claude 0.12.5.
+
 ## [0.4.2] - 2026-08-05
 
 ### Fixed
