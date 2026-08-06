@@ -711,6 +711,107 @@ test("start_new_cycle BLOCKED until lessons.md is persisted", () => {
   assert.strictEqual(r.ok, true);
   assert.strictEqual(engine.getPhaseState()!.currentPhase, 0);
 });
+console.log("\n=== RO3 Contract Tests ===\n");
+
+/** architecture.md with one version section, or two when `v2Modules` is given. */
+function writeArchVersions(ws: string, v1: string[], v2?: string[]): void {
+  const table = (mods: string[], from: number) =>
+    "| id | module | responsibility | interface | depends-on |\n" +
+    "|---|---|---|---|---|\n" +
+    mods.map((m, i) => `| M-0${from + i} | ${m} | does ${m} things | call(${m}) -> out | — |`).join("\n");
+  let content = "# Architecture\n\n## V(1)\n\n" + table(v1, 1) + "\n";
+  if (v2) content += "\n## V(2)\n\n" + table(v2, 1) + "\n";
+  fs.writeFileSync(path.join(ws, "specs", "technical", "architecture.md"), content);
+}
+
+/** coverage-matrix.md with one section per iteration. */
+function writeMatrixIterations(ws: string, rounds: Array<{ iteration: number; rows: Array<[string, string]> }>): void {
+  let content = "# Coverage Findings\n";
+  for (const r of rounds) {
+    content += `\n## Iteração ${r.iteration} — V(${r.iteration})\n\n` +
+      "| id | module | lens | severity | description |\n|---|---|---|---|---|\n" +
+      r.rows.map(([id, mod]) => `| ${id} | ${mod} | Security | 🔴 | finding in ${mod} that matters |`).join("\n") + "\n";
+  }
+  fs.writeFileSync(path.join(ws, "specs", "design", "coverage-matrix.md"), content);
+}
+
+test("re-entering Phase 2 clears the lens declaration (RO3 item 1)", () => {
+  toPhase2Stamped();
+  assert.ok(engine.getExitCriteriaWithDefs(2).find((c) => c.criterion === "activated_lenses_recorded")!.met);
+  engine.startIteration(2);
+  const lenses = engine.getExitCriteriaWithDefs(2).find((c) => c.criterion === "activated_lenses_recorded")!;
+  assert.strictEqual(lenses.met, false, "a new round must declare its own lens set");
+});
+
+
+
+test("projectSpec entries are stamped with phase and instant (RO3 item 4)", () => {
+  engine.initProject("Test", "Desc");
+  engine.updateProjectSpec({ stack: ["TypeScript"], constraints: ["no external auth"] });
+  const spec = engine.getProjectSpec();
+  const entry = spec.stack[0];
+  assert.ok(typeof entry !== "string", "must be stamped, not a bare string");
+  if (typeof entry === "string") return;
+  assert.strictEqual(entry.value, "TypeScript");
+  assert.strictEqual(entry.phase, 0);
+  assert.ok(!Number.isNaN(Date.parse(entry.at)), "at must be an ISO instant");
+});
+
+test("a value already present is not re-stamped — the date marks first appearance", () => {
+  engine.initProject("Test", "Desc");
+  engine.updateProjectSpec({ stack: ["TypeScript"] });
+  const first = engine.getProjectSpec().stack[0];
+  engine.updateProjectSpec({ stack: ["TypeScript", "React"] });
+  const spec = engine.getProjectSpec();
+  assert.strictEqual(spec.stack.length, 2);
+  assert.deepStrictEqual(spec.stack[0], first, "the original entry must be untouched");
+});
+
+test("bare-string projectSpec entries from older projects still read (RO3 item 4)", () => {
+  engine.initProject("Test", "Desc");
+  const raw = JSON.parse(fs.readFileSync(path.join(workspace, ".versus", "state.json"), "utf-8"));
+  raw.projectSpec.stack = ["LegacyStack"];   // as written before stamping existed
+  fs.writeFileSync(path.join(workspace, ".versus", "state.json"), JSON.stringify(raw));
+  engine.load();
+  assert.deepStrictEqual(engine.getProjectSpecValues().stack, ["LegacyStack"]);
+});
+
+test("matrix naming a module absent from the current architecture BLOCKS (RO3 item 6)", () => {
+  toPhase2Stamped();
+  writeArchVersions(workspace, ["auth", "ui"]);
+  writeMatrixIterations(workspace, [{ iteration: 1, rows: [["P-01", "auth"], ["P-02", "ghost"]] }]);
+  const r = engine.advancePhase(3);
+  assert.strictEqual(r.ok, false);
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("ghost")), "must name the unknown module");
+});
+
+test("an earlier iteration may name a module a later version removed (RO3 item 6)", () => {
+  // The quota-limiter case: V(1) had it, V(2) dropped it, iteration 1's findings
+  // legitimately still point at it. A naive check would block every evolved design.
+  toPhase2Stamped();
+  writeArchVersions(workspace, ["quota-limiter", "auth"], ["auth", "store"]);
+  writeMatrixIterations(workspace, [
+    { iteration: 1, rows: [["P-01", "quota-limiter"]] },
+    { iteration: 2, rows: [["P-02", "auth"], ["P-03", "store"]] },
+  ]);
+  engine.startIteration(2);
+  engine.markExitCriterion(2, "activated_lenses_recorded", true);
+  assert.strictEqual(engine.advancePhase(3).ok, true, "history must be tolerated, only the current round checked");
+});
+
+test("from iteration 2 on, a matrix without an iteration header BLOCKS (RO3 item 5)", () => {
+  toPhase2Stamped();
+  writeArchVersions(workspace, ["auth"]);
+  writeCoverageMatrix(workspace);          // valid rows, but no '## Iteração N' header
+  engine.startIteration(2);
+  engine.markExitCriterion(2, "activated_lenses_recorded", true);
+  const r = engine.advancePhase(3);
+  assert.strictEqual(r.ok, false);
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("iteration section header")));
+});
+
 console.log("\n=== Phase Gate Path Tests ===\n");
 
 const GATE_WS = "/home/dev/proj";

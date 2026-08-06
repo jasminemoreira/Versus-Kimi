@@ -8,6 +8,9 @@ import {
   Decision,
   ExitCriterionState,
   ScoreBreakdown,
+  ProjectSpec,
+  SpecItem,
+  specValue,
   SpecsStatus,
   TransitionError,
   IterationInfo,
@@ -251,6 +254,106 @@ export class StateEngine {
     return !!t && t.outcome === "pass" && t.phase === phase;
   }
 
+
+  /**
+   * Module names declared in the architecture doc, split by version section.
+   *
+   * Phase 3 appends `## V(N+1)` rather than overwriting, so the doc holds every
+   * version the design passed through. `all` is the union — the names any finding
+   * ever legitimately referenced; `last` is the version now in force.
+   */
+  architectureModules(relPath = "technical/architecture.md"): { all: Set<string>; last: Set<string> } {
+    const all = new Set<string>();
+    let last = new Set<string>();
+    try {
+      const full = path.join(this.specsPath, relPath);
+      if (!fs.existsSync(full)) return { all, last };
+      for (const line of fs.readFileSync(full, "utf-8").split("\n")) {
+        if (/^\s*##\s/.test(line) && /\bV\s*\(?\d+\)?/i.test(line)) {
+          last = new Set<string>();          // a new version section starts here
+          continue;
+        }
+        const row = line.match(/^\s*\|\s*M-\d+\s*\|\s*([^|]+?)\s*\|/);
+        if (!row) continue;
+        const name = row[1].trim().toLowerCase();
+        if (!name) continue;
+        all.add(name);
+        last.add(name);
+      }
+    } catch { /* unreadable — treat as empty */ }
+    return { all, last: last.size > 0 ? last : all };
+  }
+
+  /**
+   * Finding rows of the coverage matrix, grouped by the iteration section they sit
+   * under. A matrix with no iteration header yields a single group numbered 1.
+   */
+  matrixFindingsByIteration(relPath = "design/coverage-matrix.md"): Array<{ iteration: number; modules: string[] }> {
+    const groups: Array<{ iteration: number; modules: string[] }> = [];
+    let current: { iteration: number; modules: string[] } | undefined;
+    try {
+      const full = path.join(this.specsPath, relPath);
+      if (!fs.existsSync(full)) return groups;
+      for (const line of fs.readFileSync(full, "utf-8").split("\n")) {
+        const header = line.match(/^\s*##.*?itera(?:[cç][aã]o|tion)\s*(\d+)/i);
+        if (header) {
+          current = { iteration: parseInt(header[1], 10), modules: [] };
+          groups.push(current);
+          continue;
+        }
+        const row = line.match(/^\s*\|\s*(?!M-)([A-Za-z]{1,4}-\d+)\s*\|\s*([^|]+?)\s*\|/);
+        if (!row) continue;
+        if (!current) {
+          current = { iteration: 1, modules: [] };
+          groups.push(current);
+        }
+        const name = row[2].trim().toLowerCase();
+        if (name) current.modules.push(name);
+      }
+    } catch { /* unreadable — treat as empty */ }
+    return groups;
+  }
+
+  /**
+   * Cross-check for Phase 2: every module named by the CURRENT iteration's findings
+   * must exist in the architecture version now in force.
+   *
+   * Earlier iterations are deliberately tolerated. The 2↔3 loop critiques a
+   * different architecture each round, so a finding from iteration 1 legitimately
+   * names a module V(2) removed — a naive check would block every project whose
+   * design evolved, which is the normal case, not the exception.
+   */
+  private crossCheckMatrixModules(): string[] {
+    const out: string[] = [];
+    const groups = this.matrixFindingsByIteration();
+    if (groups.length === 0) return out;
+
+    const iteration = this.state?.currentIteration ?? 1;
+    if (iteration > 1 && !groups.some((g) => g.iteration > 1)) {
+      out.push(
+        `[Phase 2] coverage_matrix: the project is on iteration ${iteration}, but specs/design/coverage-matrix.md ` +
+        `has no iteration section header — every finding would silently be read as iteration 1. ` +
+        `Head each round's rows with '## Iteração N — V(N)' (or '## Iteration N') so a finding can be traced to the architecture it was made against.`
+      );
+      return out;
+    }
+
+    const arch = this.architectureModules();
+    if (arch.all.size === 0) return out;   // no module table to check against
+
+    const currentGroup = groups.reduce((a, b) => (b.iteration >= a.iteration ? b : a));
+    const unknown = [...new Set(currentGroup.modules)].filter((m) => !arch.last.has(m));
+    if (unknown.length > 0) {
+      out.push(
+        `[Phase 2] coverage_matrix: iteration ${currentGroup.iteration} names module(s) absent from the current architecture version: ` +
+        `${unknown.join(", ")}. Every module a finding cites must appear in the module table of the version in force ` +
+        `(specs/technical/architecture.md) — otherwise the finding cannot be traced back to a design. ` +
+        `Findings from earlier iterations may name modules that were later removed; those are not checked.`
+      );
+    }
+    return out;
+  }
+
   /**
    * Messages for required criteria of `phase` whose persisted/witnessed evidence
    * is missing — empty means all evidence is present. Shared by advancePhase and
@@ -282,6 +385,8 @@ export class StateEngine {
         );
       }
     }
+    if (phase === 2) out.push(...this.crossCheckMatrixModules());
+
     return out;
   }
 
@@ -358,6 +463,22 @@ export class StateEngine {
     }
 
     this.state.currentIteration += 1;
+
+    // Each turn of the 2↔3 loop critiques a DIFFERENT architecture, so the lens
+    // set has to be declared again against the version now in hand. Clearing the
+    // criterion makes the gate ask for a fresh declaration instead of letting
+    // iteration 1's stand for every round — which is what made it impossible to
+    // say which lenses were active when a given finding was produced.
+    if (phase === 2) {
+      const lenses = this.state.exitCriteria.find(
+        (c) => c.phase === 2 && c.criterion === "activated_lenses_recorded"
+      );
+      if (lenses) {
+        lenses.met = false;
+        lenses.details = undefined;
+      }
+    }
+
     this.save();
 
     return {
@@ -393,22 +514,56 @@ export class StateEngine {
     return decision;
   }
 
+  /**
+   * Appends to projectSpec, stamping each new entry with the phase and instant it
+   * was recorded. Existing entries — including bare strings from older projects —
+   * are left exactly as they are; a value already present is not re-stamped, so a
+   * date always marks first appearance.
+   */
   updateProjectSpec(spec: Partial<{ stack: string[]; outOfScope: string[]; patterns: string[]; constraints: string[] }>): void {
     if (!this.state) throw new Error("Project not initialized.");
     if (!this.state.projectSpec) {
       this.state.projectSpec = { stack: [], outOfScope: [], patterns: [], constraints: [] };
     }
     const ps = this.state.projectSpec;
-    if (spec.stack) ps.stack = dedupe([...ps.stack, ...spec.stack]);
-    if (spec.outOfScope) ps.outOfScope = dedupe([...ps.outOfScope, ...spec.outOfScope]);
-    if (spec.patterns) ps.patterns = dedupe([...ps.patterns, ...spec.patterns]);
-    if (spec.constraints) ps.constraints = dedupe([...ps.constraints, ...spec.constraints]);
+    const at = new Date().toISOString();
+    const phase = this.state.currentPhase;
+
+    const merge = (current: SpecItem[], incoming: string[] | undefined): SpecItem[] => {
+      if (!incoming) return current;
+      const seen = new Set(current.map(specValue));
+      const out = [...current];
+      for (const raw of incoming) {
+        const value = raw.trim();
+        if (value.length === 0 || seen.has(value)) continue;
+        seen.add(value);
+        out.push({ value, phase, at });
+      }
+      return out;
+    };
+
+    ps.stack = merge(ps.stack, spec.stack);
+    ps.outOfScope = merge(ps.outOfScope, spec.outOfScope);
+    ps.patterns = merge(ps.patterns, spec.patterns);
+    ps.constraints = merge(ps.constraints, spec.constraints);
     this.save();
   }
 
-  getProjectSpec(): { stack: string[]; outOfScope: string[]; patterns: string[]; constraints: string[] } {
+  /** projectSpec as written — entries may be strings (older projects) or stamped objects. */
+  getProjectSpec(): ProjectSpec {
     if (!this.state) throw new Error("Project not initialized.");
     return this.state.projectSpec ?? { stack: [], outOfScope: [], patterns: [], constraints: [] };
+  }
+
+  /** projectSpec flattened to plain strings, for callers that only want the values. */
+  getProjectSpecValues(): { stack: string[]; outOfScope: string[]; patterns: string[]; constraints: string[] } {
+    const ps = this.getProjectSpec();
+    return {
+      stack: ps.stack.map(specValue),
+      outOfScope: ps.outOfScope.map(specValue),
+      patterns: ps.patterns.map(specValue),
+      constraints: ps.constraints.map(specValue),
+    };
   }
 
   updateScore(score: number, breakdown: ScoreBreakdown): void {

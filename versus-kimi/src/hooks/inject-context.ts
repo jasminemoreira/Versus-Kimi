@@ -10,6 +10,7 @@
 import { StateEngine, LOOP_FAILURE_THRESHOLD } from "../state/engine";
 import { getCompleteGuidance } from "../rules/full-guidance";
 import { getPhaseDefinition } from "../rules/phases";
+import { specValue } from "../state/types";
 import { readHookInput, resolveWorkspace, drainNotices, emit, pass } from "../kimi/hook-io";
 
 async function main() {
@@ -60,10 +61,12 @@ async function main() {
   // Project spec (stack, patterns, constraints, out-of-scope)
   const spec = state.projectSpec;
   if (spec) {
-    if (spec.stack.length > 0) lines.push(`Approved stack: ${spec.stack.join(", ")}`);
-    if (spec.outOfScope.length > 0) lines.push(`Out of scope: ${spec.outOfScope.join(", ")}`);
-    if (spec.patterns.length > 0) lines.push(`Patterns: ${spec.patterns.join(", ")}`);
-    if (spec.constraints.length > 0) lines.push(`Constraints: ${spec.constraints.join(", ")}`);
+    // Entries are stamped objects since 0.5.0 and bare strings before it — read both.
+    const values = (items: typeof spec.stack) => items.map(specValue).join(", ");
+    if (spec.stack.length > 0) lines.push(`Approved stack: ${values(spec.stack)}`);
+    if (spec.outOfScope.length > 0) lines.push(`Out of scope: ${values(spec.outOfScope)}`);
+    if (spec.patterns.length > 0) lines.push(`Patterns: ${values(spec.patterns)}`);
+    if (spec.constraints.length > 0) lines.push(`Constraints: ${values(spec.constraints)}`);
   }
 
   // P2: warn if ACTIVATED LENSES decision is missing (Step 1 not yet executed)

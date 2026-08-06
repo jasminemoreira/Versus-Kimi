@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.0] - 2026-08-06
+
+Implements the seven corrections requested in `RO3/CORRECOES-EXTENSAO.md` — a contract written by the consumer of this data (the RO3 analysis scripts), not a port of an upstream patch. **This build now diverges from Versus Claude 0.12.5**; `engine.ts`, `phases.ts` and `types.ts` can no longer be copied wholesale from it without diffing.
+
+### Added
+- **Lens declarations are per iteration, not accumulated (item 1).** Re-entering Phase 2 clears `activated_lenses_recorded`, so each turn of the 2↔3 loop must declare its own lens set. Each round critiques a *different* architecture; with one accumulated declaration there was no way to say which lenses were active when a given finding was produced, and any validation had to fall back on the union of all iterations — erasing the very signal.
+- **The declaration names its iteration and architecture version (item 2).** Guidance requires a first line like `ACTIVATED LENSES — iteration 2, against V(2)`, matchable by `itera[cç][aã]o\s*(\d+)` and `V\s*\(?(\d+)\)?`. Previously the pairing had to be inferred from timestamps against phase transitions.
+- **`projectSpec` entries carry phase and instant (item 4).** `stack`, `outOfScope`, `patterns` and `constraints` are now written as `{ value, phase, at }`. Bare strings are still read, so older projects stay valid — `specValue()` and `getProjectSpecValues()` flatten both. This makes "which entries existed when Phase 2 declared its lenses in iteration N?" answerable; it was not, which is why an external re-estimation had to exclude `projectSpec` entirely.
+- **Cross-check: every module a finding names must exist in the architecture (item 6).** Checked **only against the current iteration and the version in force** — earlier iterations are deliberately tolerated, because the 2↔3 loop means a finding from iteration 1 legitimately names a module V(2) removed (the `quota-limiter` case). A naive check here would block every project whose design evolved, which is the normal case.
+- **From iteration 2 on, the matrix must carry an iteration section header (item 5).** Guidance requires `## Iteração N — V(N)`; the gate enforces it once the project is past iteration 1, because without the header every finding is silently read as iteration 1 and the link to the architecture it was made against is lost. Section header, not a new column: a column before the id would break `artifactRows`, the frozen finding format and the adversarial fixtures.
+
+### Changed
+- **Activation is by project signal alone (item 3).** Guidance now states that another lens appearing to cover the same class of failure is not a reason to skip one, and that "redundant with <other lens>" is not a valid justification. Lenses that overlap must still run together — otherwise the overlap is unobservable by construction and the measurement studies an artifact of the skipping.
+- **`duplica` applies within a single lens too (item 7).** One lens recording the same defect under two ids inflates its exclusive contribution with a bookkeeping artifact.
+
+### Answers to the two questions in the request
+- **Item 5 shape:** section header, exactly as preferred — `## Iteração N — V(N)`, matchable by `itera[cç][aã]o\s*(\d+)`, with the `V(N)` present so it ties to item 2. Nothing before the id column changed.
+- **Item 1 shape:** one decision **per iteration**. The criterion is cleared on re-entry, so the gate asks again and each round produces its own `record_decision(phase=2, category='architecture')`.
+
+74 tests, exit 0 — including the `quota-limiter` tolerance case and a bare-string `projectSpec` read.
+
 ## [0.4.3] - 2026-08-05
 
 ### Changed

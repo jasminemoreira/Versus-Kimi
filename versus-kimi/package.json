@@ -2,7 +2,7 @@
   "name": "versus-kimi",
   "displayName": "Versus Kimi",
   "description": "IACDM orchestrator for Kimi Code — 8-phase structured development with adversarial critique, verification gates, and safeguards that close the AI verification gap",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "publisher": "JasmineMoreira",
   "author": "Jasmine Moreira",
   "license": "MIT",

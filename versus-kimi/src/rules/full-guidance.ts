@@ -423,7 +423,21 @@ Conditional lens activation: review ProjectSpec (stack, constraints, out-of-scop
 4. Passes are independent (one lens at a time)
 **GENERATION MODE:** Phase 2 operates in generative mode — produce failure scenarios, not quality judgments. "How does this module fail?" generates new content (no confirmation bias anchor). "Is this design good?" asks the AI to evaluate what it produced (confirmation bias activated). The lens central questions are already in generative mode — follow them as written.
 
+### Lens activation — declare it EVERY iteration, against the version in hand (MANDATORY)
+record_decision(phase=2, category='architecture') with a declaration that names, in its first line, **the iteration and the architecture version it was made against**:
+
+\`\`\`
+ACTIVATED LENSES — iteration 2, against V(2). Universal (7, always): ...
+Conditional ACTIVATED (5): ... NOT activated, with individual justification: ...
+\`\`\`
+
+One declaration PER ITERATION, never one accumulated across the loop: re-entering Phase 2 clears \`activated_lenses_recorded\`, and the gate asks again. Each turn of the 2↔3 loop critiques a DIFFERENT architecture, so the set that was active when a finding was produced is only knowable if each round declares its own.
+
+**Activation is by project signal, and only that.** That another lens appears to cover the same class of failure is NOT a reason to skip one — absence of findings is already a valid result, and deciding in advance that two lenses overlap is the conclusion, not the premise. If overlapping lenses never run together, the overlap becomes unobservable by construction. Every non-activated lens still needs its own individual justification, and "redundant with <other lens>" is not one.
+
 ### Coverage Matrix (mandatory) (⚠️ MUST DISPLAY complete table in chat — do NOT summarize or skip modules/lenses):
+**HEAD EACH ROUND WITH ITS ITERATION.** Before the rows of a given round, write a section header naming the iteration and the version it critiques — \`## Iteração 2 — V(2)\` (or \`## Iteration 2 — V(2)\`). Append each round below the previous ones; never overwrite. Without the header every finding is silently read as iteration 1, and the link between a finding and the architecture it was made against is lost. From iteration 2 on, the gate to Phase 3 requires it.
+
 **PERSIST IT AS A FINDINGS TABLE — the criterion is not met until the file has this form.** Write \`specs/design/coverage-matrix.md\` as ONE ROW PER FINDING, not a severity-per-cell grid:
 
 \`\`\`
@@ -434,7 +448,7 @@ Conditional lens activation: review ProjectSpec (stack, constraints, out-of-scop
 | P-02 | auth   | Security | 🔴 | duplica: none — session token never expires |
 \`\`\`
 
-Rules: every finding gets a **unique id in this project** (P-01, A-03, … — use a consistent prefix per lens, the SAME prefix every time that lens appears). **The prefix \`M-\` is RESERVED for modules (Phase 1's architecture table) — never use it for a finding; the Mechanical Engineering lens uses \`MEC-\`, not \`M-\`.** In the **\`lens\` column use the EXACT lens name from the Phase 2 lens table** (Security, Architectural, Resilience, …) — never an abbreviation or a translation, because cross-project analysis groups on this column and a "Segurança"/"SEG"/"Security" split makes the data unaggregatable. Use the exact Phase-1 module name in the \`module\` column. When a finding is **the same defect** another lens already recorded, add \`duplica: <that id>\` in the description. This per-finding format — not a grid of severities — is the whole point: it is what lets a later analysis (or a post-mortem when \`auth\` breaks) tell two lenses finding the SAME defect (overlap) from two lenses finding DIFFERENT defects in the same module (orthogonality). You MAY still display a readable module×lens grid in chat, but the PERSISTED file must be the findings table.
+Rules: every finding gets a **unique id in this project** (P-01, A-03, … — use a consistent prefix per lens, the SAME prefix every time that lens appears). **The prefix \`M-\` is RESERVED for modules (Phase 1's architecture table) — never use it for a finding; the Mechanical Engineering lens uses \`MEC-\`, not \`M-\`.** In the **\`lens\` column use the EXACT lens name from the Phase 2 lens table** (Security, Architectural, Resilience, …) — never an abbreviation or a translation, because cross-project analysis groups on this column and a "Segurança"/"SEG"/"Security" split makes the data unaggregatable. Use the exact Phase-1 module name in the \`module\` column. When a finding is **the same defect** another lens already recorded, add \`duplica: <that id>\` in the description. **This applies within a single lens too** — if the same lens records one defect twice under two ids, mark the second \`duplica:\` as well; otherwise that lens's exclusive contribution is inflated by a bookkeeping artifact, which has nothing to do with the taxonomy. This per-finding format — not a grid of severities — is the whole point: it is what lets a later analysis (or a post-mortem when \`auth\` breaks) tell two lenses finding the SAME defect (overlap) from two lenses finding DIFFERENT defects in the same module (orthogonality). You MAY still display a readable module×lens grid in chat, but the PERSISTED file must be the findings table.
 
 \`advance_phase()\` to Phase 3 is BLOCKED until the file exists AND contains findings rows with ids (the engine checks the form, not whether the findings are real or the \`duplica\` marks honest — that stays your and the user's judgment).
 

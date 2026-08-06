@@ -23,11 +23,36 @@ export interface PhaseState {
 }
 
 /** Structured technical context — survives model switches */
+/**
+ * A projectSpec entry. Written as an object carrying the phase and instant it was
+ * recorded, so a later analysis can ask "which entries existed when Phase 2 declared
+ * its lenses in iteration N?" — unanswerable while these were bare strings, and the
+ * reason an external re-estimation had to drop projectSpec wholesale for lack of dates.
+ * Plain strings are still accepted on read: projects written before this stay valid.
+ */
+export interface SpecEntry {
+  value: string;
+  phase: number;
+  at: string;                    // ISO instant
+}
+
+export type SpecItem = string | SpecEntry;
+
+/** The value of a projectSpec entry, whether it was written as a string or stamped. */
+export function specValue(item: SpecItem): string {
+  return typeof item === "string" ? item : item.value;
+}
+
+/** When an entry was recorded, or undefined for the unstamped strings of older projects. */
+export function specRecordedAt(item: SpecItem): string | undefined {
+  return typeof item === "string" ? undefined : item.at;
+}
+
 export interface ProjectSpec {
-  stack: string[];               // approved technologies (e.g., "TypeScript", "Node 18+")
-  outOfScope: string[];          // explicitly excluded (e.g., "Local models")
-  patterns: string[];            // architectural patterns (e.g., "MCP server standalone")
-  constraints: string[];         // hard constraints (e.g., "Copilot-only, no Claude Code artifacts")
+  stack: SpecItem[];             // approved technologies (e.g., "TypeScript", "Node 18+")
+  outOfScope: SpecItem[];        // explicitly excluded (e.g., "Local models")
+  patterns: SpecItem[];          // architectural patterns (e.g., "MCP server standalone")
+  constraints: SpecItem[];       // hard constraints (e.g., "no external auth providers")
 }
 
 /**
