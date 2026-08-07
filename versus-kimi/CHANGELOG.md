@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.1] - 2026-08-06
+
+### Fixed
+- **The Phase 2 reset was wired to a hook that never fires, and reset only one criterion.** Two defects in one place, both now closed.
+
+  RO3 item 1 was implemented in `startIteration(phase)`, guarded by `phase === 2`. But `start_iteration` takes the **current** phase, and in the 2↔3 loop the model calls it from Phase 3 — so the guard never matched and nothing was ever reset. Verified against the real sequence (`start_iteration(3)` → `advance_phase(2)`): Phase 2 came back with all five criteria still marked. The reset now lives on the `3 → 2` transition in `advancePhase`, which is the unambiguous moment the loop closes.
+
+  And it now clears **every** Phase 2 criterion, not just `activated_lenses_recorded`. Re-entering Phase 2 is a fresh critique of V(N+1) — lenses re-declared, findings re-produced, criticals and concentration re-analysed. Leaving the other four marked let the gate accept a critique of V(1) as if it were of the new design, and showed Phase 2 as nearly complete on re-entry.
+
+  Criteria of other phases are untouched (`ec.phase === 2` filter), and the artifact gates still require the files, which persist across iterations — what resets is the `met` boolean, forcing a re-mark after the round is genuinely redone.
+
+Ported from Versus Claude 0.12.8, whose implementation had the correct hook from the start. 73 tests, exit 0. Verified end to end: after `start_iteration(3)` + `advance_phase(2)`, all five Phase 2 criteria read `met: false` in `state.json` while the 18 marked in other phases survive.
+
 ## [0.6.0] - 2026-08-06
 
 ### Removed

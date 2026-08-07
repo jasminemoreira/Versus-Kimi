@@ -418,6 +418,19 @@ export class StateEngine {
     this.state.currentPhase = targetPhase;
     this.state.currentIteration = 1;
     this.resetLoopCounter();
+
+    // Re-entering Phase 2 from the 2↔3 loop is a FRESH critique of the new
+    // architecture version V(N+1): lenses re-declared, findings re-produced for
+    // the new design, criticals and concentration re-analysed. Reset EVERY Phase 2
+    // exit criterion so the gate re-requires the full round — not just the lens
+    // declaration — and the sidebar reflects a clean round. A critique of V(1)
+    // carried forward as if it were of V(N+1) is the defect the pilots exposed.
+    if (from === 3 && targetPhase === 2) {
+      for (const ec of this.state.exitCriteria) {
+        if (ec.phase === 2) ec.met = false;
+      }
+    }
+
     this.save();
 
     // Returns OK with specs warnings if any
@@ -433,21 +446,6 @@ export class StateEngine {
     }
 
     this.state.currentIteration += 1;
-
-    // Each turn of the 2↔3 loop critiques a DIFFERENT architecture, so the lens
-    // set has to be declared again against the version now in hand. Clearing the
-    // criterion makes the gate ask for a fresh declaration instead of letting
-    // iteration 1's stand for every round — which is what made it impossible to
-    // say which lenses were active when a given finding was produced.
-    if (phase === 2) {
-      const lenses = this.state.exitCriteria.find(
-        (c) => c.phase === 2 && c.criterion === "activated_lenses_recorded"
-      );
-      if (lenses) {
-        lenses.met = false;
-        lenses.details = undefined;
-      }
-    }
 
     this.save();
 

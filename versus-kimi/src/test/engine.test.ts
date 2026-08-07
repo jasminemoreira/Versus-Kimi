@@ -725,12 +725,35 @@ function writeMatrixIterations(ws: string, rounds: Array<{ iteration: number; ro
   fs.writeFileSync(path.join(ws, "specs", "design", "coverage-matrix.md"), content);
 }
 
-test("re-entering Phase 2 clears the lens declaration (RO3 item 1)", () => {
+test("looping 3→2 resets EVERY Phase 2 exit criterion (RO3 item 1)", () => {
+  // The loop-back is a fresh critique of V(N+1): a critique of V(1) must not be
+  // carried forward as if it were of the new design. Resetting only the lens
+  // criterion left the other four marked, so the gate accepted iteration 1's work
+  // and the sidebar showed Phase 2 as nearly done on re-entry.
   toPhase2Stamped();
-  assert.ok(engine.getExitCriteriaWithDefs(2).find((c) => c.criterion === "activated_lenses_recorded")!.met);
-  engine.startIteration(2);
-  const lenses = engine.getExitCriteriaWithDefs(2).find((c) => c.criterion === "activated_lenses_recorded")!;
-  assert.strictEqual(lenses.met, false, "a new round must declare its own lens set");
+  writeArchitectureDoc(workspace);
+  writeCoverageMatrix(workspace);
+  const before = engine.getExitCriteriaWithDefs(2);
+  assert.ok(before.length >= 2 && before.every((c) => c.met), "all Phase 2 criteria stamped before the loop");
+
+  assert.strictEqual(engine.advancePhase(3).ok, true);
+  assert.strictEqual(engine.advancePhase(2).ok, true, "the 2↔3 loop-back must be allowed");
+
+  const after = engine.getExitCriteriaWithDefs(2);
+  assert.strictEqual(after.filter((c) => c.met).length, 0, "every Phase 2 criterion must be cleared");
+  assert.strictEqual(engine.getPhaseState()!.currentPhase, 2);
+});
+
+test("the loop-back touches no other phase's criteria (RO3 item 1)", () => {
+  toPhase2Stamped();
+  writeArchitectureDoc(workspace);
+  writeCoverageMatrix(workspace);
+  const p0Before = engine.getExitCriteriaWithDefs(0).filter((c) => c.met).length;
+  const p1Before = engine.getExitCriteriaWithDefs(1).filter((c) => c.met).length;
+  engine.advancePhase(3);
+  engine.advancePhase(2);
+  assert.strictEqual(engine.getExitCriteriaWithDefs(0).filter((c) => c.met).length, p0Before);
+  assert.strictEqual(engine.getExitCriteriaWithDefs(1).filter((c) => c.met).length, p1Before);
 });
 
 
