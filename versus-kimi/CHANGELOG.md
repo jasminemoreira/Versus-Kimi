@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.0] - 2026-08-08
+
+### Fixed
+- **The loop-back reset was asymmetric: Phase 3 kept iteration 1's stamps.** 0.6.1 cleared every Phase 2 criterion on `3→2` but left Phase 3's four (`criticals_addressed`, `important_decided`, `scope_preserved`, `architecture_simplified`) marked from the first pass. A project that looped — `2→3 · 3→2 · 2→3 · 3→4` — then walked through the `3→4` gate on stamps that answered the *previous* critique. `criticals_addressed` carried over from iteration 1 means nobody ever confirmed iteration 2's criticals: the gate was open on evidence about a different set of findings.
+
+  The rule is now general and symmetric: on any backward transition, every phase from the target up to the one being left is reset, since all of them will be redone against the new design. For the `3→2` loop that clears Phases 2 and 3.
+
+  `start_iteration` needs no equivalent — it only increments the counter and never changes phase, so the redo always passes through `advancePhase`, where the reset lives.
+
+79 tests, exit 0. Verified end to end on the full scenario: Phase 3 answered in iteration 1, loop back, Phase 2 redone, `3→4` **blocks** until Phase 3 is answered again, then advances. Ported from Versus Claude 0.13.1.
+
+### Data consequence
+Any project already run that looped and passed `3→4` under the old behaviour carries iteration-1 stamps on Phase 3 — whether to discard it is a batch decision, as was done with T21 on the Claude side.
+
 ## [0.7.1] - 2026-08-08
 
 ### Fixed
