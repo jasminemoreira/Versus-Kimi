@@ -93,9 +93,10 @@ export function activate(context: vscode.ExtensionContext) {
   try {
     const result = ensureGlobalPermissions();
     log(`Global permissions: ${result}.`);
-    if (result === "user-managed") {
+    if (result === "user-managed" || result === "manual-merge") {
       vscode.window.showWarningMessage(
-        "Versus Kimi: your ~/.kimi-code/config.toml already has a [permission] section, " +
+        `Versus Kimi: your ~/.kimi-code/config.toml has a [permission] section this extension ` +
+        `does not own${result === "manual-merge" ? ", in a shape it cannot safely edit" : ""}, ` +
         "so the Versus rules were not added automatically. Add them by hand to avoid an " +
         "approval prompt on every methodology call.",
         "Show rules"

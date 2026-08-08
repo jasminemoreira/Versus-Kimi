@@ -912,48 +912,64 @@ test("permissions: written once, then idempotent", () => {
     assert.strictEqual(ensureGlobalPermissions(), "written");
     assert.strictEqual(ensureGlobalPermissions(), "already-present");
     const content = fs.readFileSync(configPath, "utf-8");
-    assert.ok(content.includes("Write"), "Write must be auto-approved");
-    assert.ok(content.includes("Edit"), "Edit must be auto-approved");
+    assert.ok(content.includes("Write") && content.includes("Edit"));
     assert.ok(!/\{ tool = "Bash" \}/.test(content), "Bash must NOT be auto-approved");
   });
 });
 
-test("permissions: a stale managed block is rewritten in place", () => {
-  // An upgrade that adds a rule has to reach installs that already have the
-  // block — otherwise the fix ships and nobody receives it.
+test("permissions: ours is recognised in the array-of-tables Kimi writes", () => {
+  // Kimi re-serializes the rules as [[permission.rules]] blocks and drops every
+  // comment, so the marker cannot survive. This is the exact shape found in a
+  // real config after a settings change.
   withTempKimiHome((_home, configPath) => {
-    const stale = [
-      "theme = \"dark\"",
-      "",
-      "# >>> versus-kimi (managed) — delete this block to revoke >>>",
-      "[permission]",
-      "allow = [",
-      "  { tool = \"Read\" },",
-      "]",
-      "# <<< versus-kimi (managed) <<<",
-      "",
-      "[services]",
-      "base_url = \"https://example.invalid\"",
-    ].join("\n");
-    fs.writeFileSync(configPath, stale, "utf-8");
-
-    assert.strictEqual(ensureGlobalPermissions(), "updated");
-
-    const content = fs.readFileSync(configPath, "utf-8");
-    assert.ok(content.includes("Write"), "new rule must land");
-    assert.ok(content.includes("theme = \"dark\""), "user content above must survive");
-    assert.ok(content.includes("[services]"), "user content below must survive");
-    assert.strictEqual((content.match(/\[permission\]/g) || []).length, 1, "exactly one [permission] table");
+    const canonical = ['theme = "dark"', ""].concat(
+      ["mcp__versus-kimi__*", "Read", "Glob", "Grep", "Write", "Edit"].map(
+        (p) => `[[permission.rules]]\ndecision = "allow"\nscope = "user"\npattern = "${p}"\n`
+      )
+    ).join("\n");
+    fs.writeFileSync(configPath, canonical, "utf-8");
+    assert.strictEqual(ensureGlobalPermissions(), "already-present", "no marker, but the rules are ours");
+    assert.strictEqual(fs.readFileSync(configPath, "utf-8"), canonical, "nothing may be rewritten");
   });
 });
 
-test("permissions: a user-owned [permission] section is never touched", () => {
+test("permissions: a missing rule is appended as [[permission.rules]]", () => {
   withTempKimiHome((_home, configPath) => {
-    const mine = "[permission]\nallow = [\n  { tool = \"Bash\" },\n]\n";
+    const partial = 'theme = "dark"\n\n[[permission.rules]]\ndecision = "allow"\nscope = "user"\npattern = "mcp__versus-kimi__*"\n';
+    fs.writeFileSync(configPath, partial, "utf-8");
+
+    assert.strictEqual(ensureGlobalPermissions(), "updated");
+    const content = fs.readFileSync(configPath, "utf-8");
+    for (const tool of ["Read", "Glob", "Grep", "Write", "Edit"]) {
+      assert.ok(content.includes(`pattern = "${tool}"`), `${tool} must be added`);
+    }
+    assert.ok(content.startsWith('theme = "dark"'), "user content must survive");
+    assert.strictEqual(ensureGlobalPermissions(), "already-present", "and then settle");
+  });
+});
+
+test("permissions: a rules = [...] array is spliced, not duplicated", () => {
+  withTempKimiHome((_home, configPath) => {
+    fs.writeFileSync(configPath, [
+      "[permission]",
+      "rules = [",
+      '  { decision = "allow", scope = "user", pattern = "mcp__versus-kimi__*" },',
+      "]",
+    ].join("\n"), "utf-8");
+    assert.strictEqual(ensureGlobalPermissions(), "updated");
+    const content = fs.readFileSync(configPath, "utf-8");
+    assert.strictEqual((content.match(/\[permission\]/g) || []).length, 1, "one section only");
+    assert.ok(content.includes('pattern = "Edit"'));
+  });
+});
+
+test("permissions: a section without our rule is left alone", () => {
+  withTempKimiHome((_home, configPath) => {
+    const mine = '[permission]\nrules = [\n  { decision = "allow", scope = "user", pattern = "Bash" },\n]\n';
     fs.writeFileSync(configPath, mine, "utf-8");
     assert.strictEqual(ensureGlobalPermissions(), "user-managed");
     assert.strictEqual(fs.readFileSync(configPath, "utf-8"), mine);
-    assert.ok(permissionSnippet().includes("Write"), "the snippet must show what to add");
+    assert.ok(permissionSnippet().includes("Write"));
   });
 });
 

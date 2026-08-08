@@ -401,7 +401,7 @@ const AUTO_APPROVED_TOOLS = [
   "Edit",
 ];
 
-export type PermissionResult = "written" | "updated" | "already-present" | "user-managed";
+export type PermissionResult = "written" | "updated" | "already-present" | "user-managed" | "manual-merge";
 
 /** The managed block, rendered from the current tool list. */
 function permissionBlock(): string {
@@ -428,6 +428,41 @@ function permissionBlock(): string {
  * and silently rewriting the user's own rules is worse than doing nothing. In
  * that case the caller reports what to add by hand.
  */
+/**
+ * Renders our rules as the array-of-tables form Kimi itself writes
+ * (`[[permission.rules]]`, one block per rule). Writing the same shape the host
+ * serializes to means a later rewrite by Kimi is a no-op on our side.
+ */
+function permissionRuleBlocks(tools: string[]): string {
+  return tools
+    .map((tool) => `[[permission.rules]]\ndecision = "allow"\nscope = "user"\npattern = "${tool}"\n`)
+    .join("\n");
+}
+
+/** Which of our tools already have a rule, in any of the shapes seen in the wild. */
+function toolsPresent(content: string, tools: string[]): string[] {
+  return tools.filter((tool) => new RegExp(`(pattern|tool)\\s*=\\s*"${escapeForRegex(tool)}"`).test(content));
+}
+
+function escapeForRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Writes the Versus permission rules into ~/.kimi-code/config.toml.
+ *
+ * Ownership is decided by CONTENT, never by a comment marker. Kimi rewrites this
+ * file itself — it re-serializes the rules as `[[permission.rules]]` blocks and
+ * drops every comment on the way — so a marker cannot survive a single settings
+ * change. A config carrying a rule for `mcp__versus-kimi__*` is ours however it
+ * has been re-serialized; a permission section without it belongs to the user and
+ * is never touched.
+ *
+ * Missing rules are appended as new `[[permission.rules]]` blocks, which is valid
+ * TOML wherever the file already ends, or spliced into an existing `rules = [...]`
+ * array when the config still uses that shape. Anything else returns
+ * `manual-merge` rather than guessing at the file's structure.
+ */
 export function ensureGlobalPermissions(): PermissionResult {
   const home = kimiHome();
   const configPath = path.join(home, "config.toml");
@@ -441,31 +476,38 @@ export function ensureGlobalPermissions(): PermissionResult {
     }
   }
 
-  const block = permissionBlock();
-  const start = content.indexOf(PERMISSION_BLOCK_START);
+  const ownershipMark = `mcp__${MCP_SERVER_NAME}__*`;
+  const ours = content.includes(ownershipMark);
+  const hasPermissionSection = /^\s*\[\[?permission[\].]/m.test(content);
 
-  if (start !== -1) {
-    const endMarker = content.indexOf(PERMISSION_BLOCK_END, start);
-    if (endMarker === -1) return "user-managed"; // truncated block — hands off
-    const end = endMarker + PERMISSION_BLOCK_END.length;
+  if (!ours && hasPermissionSection) return "user-managed";
 
-    const current = content.slice(start, end);
-    if (current === block) return "already-present";
+  const missing = AUTO_APPROVED_TOOLS.filter((t) => !toolsPresent(content, AUTO_APPROVED_TOOLS).includes(t));
+  if (ours && missing.length === 0) return "already-present";
 
-    fs.writeFileSync(configPath, content.slice(0, start) + block + content.slice(end), "utf-8");
+  if (!fs.existsSync(home)) fs.mkdirSync(home, { recursive: true });
+
+  // Existing `rules = [ … ]` array (the shape this extension used to write):
+  // splice into it, so the file keeps one permission section.
+  const arrayOpen = content.search(/^\s*(?:rules|allow)\s*=\s*\[/m);
+  if (ours && arrayOpen !== -1) {
+    const close = content.indexOf("]", arrayOpen);
+    if (close === -1) return "manual-merge";
+    const lines = missing
+      .map((tool) => `  { decision = "allow", scope = "user", pattern = "${tool}" },`)
+      .join("\n");
+    fs.writeFileSync(configPath, content.slice(0, close) + lines + "\n" + content.slice(close), "utf-8");
     return "updated";
   }
 
-  // Any pre-existing [permission] or [[permission.*]] table is the user's.
-  if (/^\s*\[\[?permission[\].]/m.test(content)) return "user-managed";
-
-  if (!fs.existsSync(home)) {
-    fs.mkdirSync(home, { recursive: true });
-  }
-
   const separator = content.length === 0 || content.endsWith("\n") ? "" : "\n";
-  fs.writeFileSync(configPath, content + separator + "\n" + block + "\n", "utf-8");
-  return "written";
+  const header = ours ? "" : `${PERMISSION_BLOCK_START}\n`;
+  fs.writeFileSync(
+    configPath,
+    content + separator + "\n" + header + permissionRuleBlocks(missing),
+    "utf-8"
+  );
+  return ours ? "updated" : "written";
 }
 
 /** The rules a user has to add by hand when they already manage [permission]. */

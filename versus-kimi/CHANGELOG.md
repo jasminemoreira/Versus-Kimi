@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.1] - 2026-08-08
+
+### Fixed
+- **The permission block was identified by a comment, in a file the host rewrites.** Kimi re-serializes `config.toml` on its own — it expands the rules into `[[permission.rules]]` blocks and drops every comment on the way — so the `# >>> versus-kimi (managed) >>>` marker vanished the first time a setting was changed. The extension then saw a `[permission]` section it could not recognise as its own and warned, on every activation, that the rules had not been added — while all six were in force. A false alarm, but the same blindness would have stopped a future release from ever *updating* the rules: it would have found the file foreign and given up.
+
+  Ownership is now decided by content: a config carrying a rule for `mcp__versus-kimi__*` is ours, however it has been re-serialized. Missing rules are appended as `[[permission.rules]]` blocks — the shape Kimi itself writes, so a later rewrite is a no-op — or spliced into an existing `rules = [...]` array when the config still uses that form. A permission section without our rule is still never touched.
+
+  Marker comments are still written on a fresh install as a courtesy to anyone reading the file; nothing depends on them surviving.
+
+77 tests, exit 0, covering both shapes. Verified against a copy of a real config that Kimi had already rewritten: `already-present`, file unchanged byte for byte.
+
+### Note
+The first attempt at this fix handled only `[permission]` + `rules = [...]`, the shape this extension used to write — and would have appended a conflicting `[permission]` table to the real file, which uses array-of-tables. Caught by testing against a copy of the actual config instead of the shape I assumed.
+
 ## [0.7.0] - 2026-08-08
 
 ### Added
