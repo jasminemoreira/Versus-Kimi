@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.0] - 2026-08-08
+
+### Added
+- **Cross-check: a finding's module must exist in the architecture — checked against the UNION of all versions.** Advancing 2→3 now blocks when the coverage matrix cites a module that appears in no `## V(N)` section of `specs/technical/architecture.md`. Name drift is caught with the session still open, instead of the analysis discovering afterwards that findings point at modules no artifact records: in the discarded batch, 11 findings named modules that never existed, silently.
+
+  The union is what makes this safe. A module removed between versions keeps its earlier findings legitimate and is tolerated; only a name that was never a module blocks. This is the same item deferred in 0.6.0 — it returns with the correct rule. The version I had written then compared against the *last* version alone, which would have blocked every project whose architecture evolved, the normal case rather than the exception.
+
+### Changed
+- **Three conditional-lens triggers rewritten (0.12.9).** Each was activating in 0/7 pilots or diverging, because the trigger was narrower than the lens's own central question.
+  - **UI/UX** — from "User-facing interface" to any surface a *person* operates, CLIs and operational tooling included.
+  - **Sustainability / Proportionality** — from a list of examples (AI/ML, data processing, cloud-native) to the property itself: the system decides, allocates or consumes a resource whose cost grows with use. Apply the central question, do not match the examples.
+  - **Governance / Accountability** — from "multiple teams, data domains, or compliance" to a *system* property: it records or decides something someone will later need to audit, attribute or answer for. A single-operator project activates it when the system has that property.
+
+  ⚠ **The Governance change alters the taxonomy the paper defends.** From here the batch measures the corrected taxonomy, not the published one. That is a protocol/paper matter rather than an extension one, recorded here so the trail stays honest.
+
+76 tests, exit 0, including drift-blocks, removed-module-tolerated and MEC- (a lens finding, not the reserved module prefix). Verified end to end: a matrix citing `health-prober` blocks naming the module; the same matrix on `auth` advances. Ported from Versus Claude 0.13.0.
+
 ## [0.6.1] - 2026-08-06
 
 ### Fixed

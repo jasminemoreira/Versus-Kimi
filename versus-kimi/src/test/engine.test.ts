@@ -401,6 +401,7 @@ function writeArchitectureDoc(ws: string): void {
   fs.writeFileSync(path.join(ws, "specs", "technical", "architecture.md"), content);
 }
 
+
 function toPhase2Stamped() {
   engine.initProject("Test", "Desc");
   engine.updateScore(95, makeFullBreakdown(95));
@@ -791,6 +792,47 @@ test("bare-string projectSpec entries from older projects still read (RO3 item 4
 
 
 
+test("a finding citing a module absent from the architecture BLOCKS (module drift)", () => {
+  toPhase2Stamped(); // architecture has modules auth, ui
+  fs.writeFileSync(
+    path.join(workspace, "specs", "design", "coverage-matrix.md"),
+    "# Findings\n\n| id | module | lens | severity | description |\n|---|---|---|---|---|\n" +
+    "| P-01 | auth | Security | 🔴 | real finding on a real module |\n" +
+    "| R-01 | health-prober | Resilience | 🔴 | invented module, never in the architecture table |\n"
+  );
+  const r = engine.advancePhase(3);
+  assert.strictEqual(r.ok, false, "a finding on a module the architecture never declared must block");
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("health-prober") && m.includes("absent from every version")));
+});
+test("a module removed in a later version is tolerated (union of versions)", () => {
+  // architecture with two versions: quota-limiter existed in V(1), gone in V(2).
+  toPhase2Stamped();
+  fs.writeFileSync(
+    path.join(workspace, "specs", "technical", "architecture.md"),
+    "# Architecture\n\n## V(1)\n| id | module | responsibility | interface | depends-on |\n|---|---|---|---|---|\n" +
+    "| M-01 | quota-limiter | enforce quota | allow() | store |\n\n" +
+    "## V(2)\n| id | module | responsibility | interface | depends-on |\n|---|---|---|---|---|\n" +
+    "| M-01 | limiter | enforce quota (simplified) | allow() | store |\n"
+  );
+  fs.writeFileSync(
+    path.join(workspace, "specs", "design", "coverage-matrix.md"),
+    "# Findings\n\n## Iteração 1 — V(1)\n| id | module | lens | severity | description |\n|---|---|---|---|---|\n" +
+    "| P-01 | quota-limiter | Security | 🔴 | iteration-1 finding on a module V(2) later removed |\n" +
+    "## Iteração 2 — V(2)\n| id | module | lens | severity | description |\n|---|---|---|---|---|\n" +
+    "| P-02 | limiter | Security | 🔴 | iteration-2 finding on the current module |\n"
+  );
+  assert.strictEqual(engine.advancePhase(3).ok, true, "quota-limiter is in V(1)'s table — a removed module must be tolerated");
+});
+test("Mechanical Engineering findings (MEC-) still count", () => {
+  toPhase2Stamped();
+  fs.writeFileSync(
+    path.join(workspace, "specs", "design", "coverage-matrix.md"),
+    "# Findings\n\n| id | module | lens | severity | description |\n|---|---|---|---|---|\n" +
+    "| MEC-01 | auth | Mechanical Engineering | 🔴 | rigid coupling on version bump, real finding |\n"
+  );
+  assert.strictEqual(engine.advancePhase(3).ok, true, "MEC- is a lens finding, not the reserved M- module prefix");
+});
 test("from iteration 2 on, a matrix without an iteration header BLOCKS (RO3 item 5)", () => {
   toPhase2Stamped();
   writeArchitectureDoc(workspace);
