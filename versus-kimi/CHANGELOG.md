@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.9.0] - 2026-08-09
+
+### Added
+- **Lens activation is structured state, not prose.** `record_activated_lenses(conditional, notActivated)` replaces the free-text declaration. The schema enum accepts only the 12 canonical conditional names, so a translation or abbreviation is refused at the call. All 12 must be accounted for — activated, or not-activated with a non-empty reason — and four contradictions an adversarial pass found are refused too: the same lens in both lists, a duplicate inside `conditional`, and a universal lens passed as conditional in either list.
+
+  The record lands in `state.activatedLenses` as **one entry per critique iteration** (`universal`, `conditional`, `notActivated`, `iteration`, `againstVersion`, `recordedAt`). The iteration is derived from how many transitions entered Phase 2 — `currentIteration` resets on every phase change, including the `3→2` loop-back, so it does not track critique rounds. Re-recording in the same iteration replaces that entry; a new iteration appends, preserving the history the column gate reads.
+
+- **`activated_lenses_recorded` now demands evidence** (`verify: "lenses-recorded"`): an entry for the **current** iteration, which is what forces re-declaration on each turn of the loop. The legacy prose declaration is honoured only when `state.stateVersion` is absent — i.e. a project created before this version. `init_project` stamps `stateVersion: 1`, so on new projects the structured record is mandatory and the fallback cannot become an opt-out.
+
+- **The `lens` column of every finding is validated at the 2→3 gate.** Minimum form: each value must be one of the 19 canonical names or the literal `NENHUMA`. `Sustainability` is refused, `sustainability / proportionality` accepted — this is the T21 case, four findings carrying a truncated name that the guidance already forbade and nothing checked. Strong form: a *conditional* lens must have been declared for **that finding's iteration**, read from the `## Iteração N` header above it; universals always pass. When the iteration cannot be resolved, or no declaration exists for it, the check degrades to the union of all declared sets — permissive, never blocking a legitimate project. The T14 trap is covered both ways: MEC is legitimate in the iteration that declared it, anachronistic in one that did not.
+
+### Changed — convergence with the reference
+`types.ts`, `engine.ts`, `phases.ts`, `record-tools.ts` and `index.ts` were taken from Versus Claude 0.14.0 wholesale, and this build's own changes re-applied on top: the `agent` union with `"kimi"`, the iteration-header gate (RO3 item 5), the chat-template phrasing in the MCP hints. The RO3 timestamped-`projectSpec` implementation was **renamed to the reference's** (`SpecEntry`/`specEntryValue`, `getProjectSpec()` returning flat strings with the stamps living in `state.json`) — same shape on disk, so the RO3 contract is unaffected, and future patches become copyable again instead of hand-merged. That divergence, flagged when 0.5.0 shipped, had started to cost.
+
+100 tests, exit 0. Verified end to end: no declaration blocks 2→3 · a translated name is refused at the call · a valid declaration records iteration 1 against V(1) · a truncated `Sustainability` in the matrix blocks · the canonical declared name advances.
+
+### Data consequence
+Any slot in the batch run under the old behaviour with a non-canonical lens name carries findings the analysis cannot group — discard as done with T21 on the Claude side. No Kimi project reached Phase 2.
+
 ## [0.8.0] - 2026-08-08
 
 ### Fixed

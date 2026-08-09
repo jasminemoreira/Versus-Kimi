@@ -10,7 +10,7 @@
 import { StateEngine, LOOP_FAILURE_THRESHOLD } from "../state/engine";
 import { getCompleteGuidance } from "../rules/full-guidance";
 import { getPhaseDefinition } from "../rules/phases";
-import { specValue } from "../state/types";
+import { specEntryValue } from "../state/types";
 import { readHookInput, resolveWorkspace, drainNotices, emit, pass } from "../kimi/hook-io";
 
 async function main() {
@@ -62,18 +62,24 @@ async function main() {
   const spec = state.projectSpec;
   if (spec) {
     // Entries are stamped objects since 0.5.0 and bare strings before it — read both.
-    const values = (items: typeof spec.stack) => items.map(specValue).join(", ");
+    const values = (items: typeof spec.stack) => items.map(specEntryValue).join(", ");
     if (spec.stack.length > 0) lines.push(`Approved stack: ${values(spec.stack)}`);
     if (spec.outOfScope.length > 0) lines.push(`Out of scope: ${values(spec.outOfScope)}`);
     if (spec.patterns.length > 0) lines.push(`Patterns: ${values(spec.patterns)}`);
     if (spec.constraints.length > 0) lines.push(`Constraints: ${values(spec.constraints)}`);
   }
 
-  // P2: warn if ACTIVATED LENSES decision is missing (Step 1 not yet executed)
+  // P2: warn when this critique round has no structured lens record yet.
+  // Counted per iteration — the 2↔3 loop re-declares against each new version.
   if (phase === 2) {
-    const hasLensDecision = state.decisions.some((d) => d.content.includes("ACTIVATED LENSES"));
-    if (!hasLensDecision) {
-      lines.push("⚠ P2 STEP 1 MISSING: No lens activation decision found. Call record_decision(category='architecture', content='ACTIVATED LENSES: [list]. NOT ACTIVATED: [lens — reason]') BEFORE applying any lens.");
+    const round = Math.max(1, (state.history ?? []).filter((h) => h.to === 2).length);
+    const declared = (state.activatedLenses ?? []).some((l) => l.iteration === round);
+    if (!declared) {
+      lines.push(
+        `⚠ P2 STEP 1 MISSING: iteration ${round} has no lens activation on record. Call ` +
+        "record_activated_lenses(conditional=[...], notActivated=[{lens, reason}, ...]) BEFORE applying any lens — " +
+        "all 12 conditional lenses must be accounted for, by canonical name."
+      );
     }
   }
 

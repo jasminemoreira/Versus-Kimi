@@ -16,43 +16,54 @@ export interface PhaseState {
   /** Last test run the test-outcome hook actually witnessed. Gates tests_passing:
    *  the engine must have seen a green run in the phase, not just be told it passed. */
   lastTestOutcome?: { outcome: "pass" | "fail"; phase: number; at: string };
+  /** Lens activation for Phase 2, recorded STRUCTURALLY by record_activated_lenses —
+   *  ONE entry per critique iteration (the 2↔3 loop re-declares against each new
+   *  architecture version). Was a free-text decision consumers had to grep for
+   *  "ACTIVATED LENSES", which failed silently in any other language and could not be
+   *  validated against the canonical lens set. Per-iteration history is what lets a
+   *  finding be matched to the lens set in force when it was produced. */
+  activatedLenses?: LensActivation[];
+  /** State-schema era. Absent = a project created before v0.14.0: the legacy free-text
+   *  lens decision is still honoured for it. Present = a project that must use the
+   *  structured record — so the fallback cannot become an opt-out on new work. */
+  stateVersion?: number;
   lastPhaseStateCheck?: string;  // ISO timestamp — gateway guard for smaller models
   createdAt: string;             // ISO timestamp
   updatedAt: string;
   history: PhaseTransition[];    // transition log
 }
 
-/** Structured technical context — survives model switches */
+/** Which lenses one critique iteration activated, and why the others were not.
+ *  Names are validated against rules/lenses.ts on write, so a later analysis can
+ *  group on this field across projects without a normalization table. */
+export interface LensActivation {
+  universal: string[];                                  // the 7, always
+  conditional: string[];                                // the subset activated this iteration
+  notActivated: { lens: string; reason: string }[];     // the rest, each with a reason
+  iteration: number;                                    // critique iteration (1 = first Phase 2 pass)
+  againstVersion: number;                               // architecture version it was decided against
+  recordedAt: string;                                   // ISO timestamp
+}
+
 /**
- * A projectSpec entry. Written as an object carrying the phase and instant it was
- * recorded, so a later analysis can ask "which entries existed when Phase 2 declared
- * its lenses in iteration N?" — unanswerable while these were bare strings, and the
- * reason an external re-estimation had to drop projectSpec wholesale for lack of dates.
- * Plain strings are still accepted on read: projects written before this stay valid.
+ * A projectSpec entry. Either a plain string (legacy projects) or a timestamped
+ * record capturing WHEN the entry was added and in which phase — so a later
+ * analysis can ask "which entries existed when Phase 2 declared lenses in
+ * iteration N?". Readers must accept both forms (use specEntryValue).
  */
-export interface SpecEntry {
-  value: string;
-  phase: number;
-  at: string;                    // ISO instant
+export type SpecEntry = string | { value: string; phase?: number; at: string };
+
+/** Extracts the string value of a SpecEntry regardless of form. */
+export function specEntryValue(e: SpecEntry): string {
+  return typeof e === "string" ? e : e.value;
 }
 
-export type SpecItem = string | SpecEntry;
-
-/** The value of a projectSpec entry, whether it was written as a string or stamped. */
-export function specValue(item: SpecItem): string {
-  return typeof item === "string" ? item : item.value;
-}
-
-/** When an entry was recorded, or undefined for the unstamped strings of older projects. */
-export function specRecordedAt(item: SpecItem): string | undefined {
-  return typeof item === "string" ? undefined : item.at;
-}
-
+/** Structured technical context — survives model switches */
 export interface ProjectSpec {
-  stack: SpecItem[];             // approved technologies (e.g., "TypeScript", "Node 18+")
-  outOfScope: SpecItem[];        // explicitly excluded (e.g., "Local models")
-  patterns: SpecItem[];          // architectural patterns (e.g., "MCP server standalone")
-  constraints: SpecItem[];       // hard constraints (e.g., "no external auth providers")
+  stack: SpecEntry[];            // approved technologies (e.g., "TypeScript", "Node 18+")
+  outOfScope: SpecEntry[];       // explicitly excluded (e.g., "Local models")
+  patterns: SpecEntry[];         // architectural patterns (e.g., "MCP server standalone")
+  constraints: SpecEntry[];      // hard constraints (e.g., "Copilot-only, no Claude Code artifacts")
 }
 
 /**
@@ -147,6 +158,8 @@ export function createDefaultState(name: string, description: string): PhaseStat
     phase0Score: null,
     phase0Breakdown: null,
     decisions: [],
+    activatedLenses: [],
+    stateVersion: 1,
     exitCriteria: [],
     safeguards: [
       { id: "S0", status: "ok" },

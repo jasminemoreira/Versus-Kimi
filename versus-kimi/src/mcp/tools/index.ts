@@ -5,7 +5,7 @@ import { StateEngine } from "../../state/engine";
 
 import { getPhaseStateTool, getDecisionsTool, getExitCriteriaTool, updateProjectSpecTool, handleGetPhaseState, handleGetDecisions, handleGetExitCriteria, handleUpdateProjectSpec } from "./state-tools";
 import { advancePhaseTool, startIterationTool, startNewCycleTool, handleAdvancePhase, handleStartIteration, handleStartNewCycle } from "./transition-tools";
-import { recordDecisionTool, updateScoreTool, markExitCriterionTool, handleRecordDecision, handleUpdateScore, handleMarkExitCriterion } from "./record-tools";
+import { recordDecisionTool, updateScoreTool, markExitCriterionTool, recordActivatedLensesTool, handleRecordDecision, handleUpdateScore, handleMarkExitCriterion, handleRecordActivatedLenses } from "./record-tools";
 import { checkSafeguardTool, checkAllSafeguardsTool, handleCheckSafeguard, handleCheckAllSafeguards } from "./safeguard-tools";
 import { checkSpecsStatusTool, handleCheckSpecsStatus } from "./specs-tools";
 import { initProjectTool, handleInitProject } from "./project-tools";
@@ -18,6 +18,7 @@ export const ALL_TOOLS: Tool[] = [
   advancePhaseTool,
   startIterationTool,
   recordDecisionTool,
+  recordActivatedLensesTool,
   updateScoreTool,
   markExitCriterionTool,
   checkSafeguardTool,
@@ -89,6 +90,7 @@ function sanitize(args: Record<string, unknown>): Record<string, unknown> {
   if ("outOfScope" in out) out.outOfScope = toStringArray(out.outOfScope);
   if ("patterns" in out) out.patterns = toStringArray(out.patterns);
   if ("constraints" in out) out.constraints = toStringArray(out.constraints);
+  if ("conditional" in out) out.conditional = toStringArray(out.conditional);
   return out;
 }
 
@@ -111,6 +113,11 @@ function dispatch(
       return handleStartIteration(engine, args as { phase: number });
     case "record_decision":
       return handleRecordDecision(engine, args as { phase: number; category: string; content: string });
+    case "record_activated_lenses":
+      return handleRecordActivatedLenses(
+        engine,
+        args as unknown as { conditional: string[]; notActivated: { lens: string; reason: string }[] }
+      );
     case "update_score":
       return handleUpdateScore(engine, args as { score: number; breakdown: any });
     case "mark_exit_criterion":
