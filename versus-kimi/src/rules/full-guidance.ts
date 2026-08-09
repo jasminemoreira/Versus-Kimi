@@ -438,6 +438,8 @@ Rules: every finding gets a **unique id in this project** (P-01, A-03, … — u
 
 \`advance_phase()\` to Phase 3 is BLOCKED until the file exists AND contains findings rows with ids (the engine checks the form, not whether the findings are real or the \`duplica\` marks honest — that stays your and the user's judgment).
 
+The \`severity\` column is checked the same way — exactly one of 🔴/🟡/🟢 (a word beside the glyph is fine; 'high', 'P1' or an empty cell is not), because the analysis counts criticals against important on that column.
+
 ### Concentration analysis (MANDATORY after the matrix) (⚠️ MUST DISPLAY analysis in chat):
 - **Concentration by module:** Module with findings across ALL lenses → probably poorly conceived → requires REDESIGN, not patch.
 - **Concentration by lens:** Lens with findings across ALL modules → SYSTEMIC failure (e.g.: no parameter has a reference, no module testable in isolation).

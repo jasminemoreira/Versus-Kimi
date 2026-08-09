@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.2] - 2026-08-09
+
+### Added
+- **The `severity` column of every finding is validated at the 2→3 gate.** Same family as the lens-column gate, and the same failure mode behind the last three discards: an instruction in the guidance with no latch in the gate. The guidance fixes three levels (🔴/🟡/🟢) and nothing checked the column — while the analysis counts criticals against important on exactly that column, so a word, a code like `P1` or an empty cell became a silently wrong count.
+
+  Tolerant of decoration, strict on the signal: `🔴 Critical` and a bare `🔴` both pass; `high`, `P1`, an empty cell (no glyph) and `🔴🟡` (two glyphs, ambiguous) all block, naming the row. Form only — whether a finding deserves its severity stays human judgment.
+
+  Safe by evidence, checked before implementing: the 899 findings across the 11 coverage matrices on this machine use exactly the three glyphs, zero variation, so no existing project is blocked.
+
+### Not added, and why
+The same audit found a second candidate — requiring a duplicate finding's description to stand on its own. It is deliberately **not** a gate: the quality part ("describes it well") is the oracle and unmechanizable, and the mechanizable shapes (pointer-only description, dangling `duplica:`) occur zero times in the corpus. A latch there would guard nothing and only risk false blocks. Declared as a protocol limitation instead of code — the same decision taken in the reference build.
+
+106 tests, exit 0. Verified end to end with one isolated project per case: textual, empty and two-glyph block; bare glyph and decorated glyph advance.
+
 ## [0.9.1] - 2026-08-09
 
 Housekeeping. **Non-behavioural**: the injected guidance comes out byte-for-byte identical and no gate changed — verified by dumping `getCompleteGuidance()` before and after and diffing.

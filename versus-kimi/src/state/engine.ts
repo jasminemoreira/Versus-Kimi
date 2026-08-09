@@ -124,8 +124,6 @@ export class StateEngine {
     return null;
   }
 
-
-
   private save(): void {
     if (!this.state) return;
     this.state.updatedAt = new Date().toISOString();
@@ -282,9 +280,10 @@ export class StateEngine {
 
   /** Finding rows of the coverage matrix, each tagged with the iteration of the
    *  `## Iteração N` section it sits under (null before the first header). The lens
-   *  is the 3rd cell — the row format is frozen (id | module | lens | severity | desc). */
-  private matrixFindings(): { id: string; lens: string; iteration: number | null }[] {
-    const out: { id: string; lens: string; iteration: number | null }[] = [];
+   *  is the 3rd cell, severity the 4th — the row format is frozen
+   *  (id | module | lens | severity | desc). */
+  private matrixFindings(): { id: string; lens: string; severity: string; iteration: number | null }[] {
+    const out: { id: string; lens: string; severity: string; iteration: number | null }[] = [];
     try {
       const full = path.join(this.specsPath, "design/coverage-matrix.md");
       if (!fs.existsSync(full)) return out;
@@ -301,29 +300,33 @@ export class StateEngine {
         if (cells.length && cells[cells.length - 1] === "") cells.pop();
         if (cells.length < 3) continue;
         if (!idRe.test(cells[0])) continue;
-        out.push({ id: cells[0], lens: cells[2], iteration: currentIter });
+        out.push({ id: cells[0], lens: cells[2], severity: cells[3] ?? "", iteration: currentIter });
       }
     } catch { /* telemetry never blocks */ }
     return out;
   }
 
   /**
-   * Errors in the `lens` column of the coverage matrix (2→3 gate). Two layers:
-   *   (2.1) every finding's lens must be one of the 19 canonical names — or the
+   * Errors in a finding row of the coverage matrix (2→3 gate). Three layers, all
+   * form (never quality — whether a finding is real stays a human judgment):
+   *   LENS 2.1 — every finding's lens must be one of the 19 canonical names, or the
    *         literal NENHUMA (the declared channel for a finding that fit no lens).
-   *         `Sustainability` (a truncation) is rejected; `Sustainability /
-   *         Proportionality` accepted. This is what the T21 case needed.
-   *   (2.2) a CONDITIONAL lens on a finding must have been DECLARED for that
-   *         finding's iteration. Universals always run, so they never fail (2.2).
-   * The iteration is matched against the declaration WITH THE SAME iteration number —
-   * never the current one nor the union, the trap the v0.13.0 module gate proved
-   * costly: a lens set legitimately evolves across the loop (MEC entered in iteration
-   * 2 in the pilot), so a finding must be judged by ITS round's set. When the
-   * iteration cannot be resolved (no header, or no declaration for that number) the
-   * check degrades to the UNION of all declared sets — permissive, never over-blocking.
-   * Skips (2.2) entirely when nothing is declared yet; (2.1) still runs. Form only.
+   *         `Sustainability` (a truncation) is rejected; the canonical name accepted.
+   *   LENS 2.2 — a CONDITIONAL lens must have been DECLARED for that finding's
+   *         iteration. Universals always run, so they never fail 2.2. Matched against
+   *         the declaration WITH THE SAME iteration number — never the current one nor
+   *         the union, the trap the v0.13.0 module gate proved costly: a lens set
+   *         legitimately evolves across the loop (MEC entered in iteration 2 in the
+   *         pilot). When the iteration cannot be resolved, the check degrades to the
+   *         UNION of all declared sets — permissive, never over-blocking. Skips 2.2
+   *         when nothing is declared yet.
+   *   SEVERITY — the 4th cell must carry exactly one of 🔴 / 🟡 / 🟢. The analysis
+   *         counts criticals vs important on this column; "high", "P1" or an empty
+   *         cell would be miscounted. Tolerant of decoration ("🔴 Critical" passes),
+   *         strict on the signal (zero or two severities blocks). All 853 findings in
+   *         the pilot corpus already use exactly these three glyphs.
    */
-  private findingLensErrors(): string[] {
+  private findingRowErrors(): string[] {
     const findings = this.matrixFindings();
     if (findings.length === 0) return [];
     const acts = this.state?.activatedLenses ?? [];
@@ -334,8 +337,19 @@ export class StateEngine {
       byIter.set(a.iteration, new Set(a.conditional));
     }
     const universals = new Set<string>(UNIVERSAL_LENSES as readonly string[]);
+    const SEVERITIES = ["🔴", "🟡", "🟢"];
     const errs: string[] = [];
     for (const f of findings) {
+      // Severity — exactly one canonical glyph, decoration tolerated.
+      const sev = SEVERITIES.filter((s) => f.severity.includes(s));
+      if (sev.length !== 1) {
+        errs.push(
+          `[Phase 2] coverage_matrix row ${f.id}: severity "${f.severity || "(empty)"}" must be exactly one of ` +
+          `🔴 (Critical) / 🟡 (Important) / 🟢 (Suggestion). The analysis counts criticals vs important on this ` +
+          `column — a word, a code like "P1", or an empty cell cannot be counted.`
+        );
+      }
+      // Lens 2.1 — canonical name or NENHUMA.
       if (/^nenhuma$/i.test(f.lens)) continue;                        // declared "no lens" channel
       const canon = canonicalLens(f.lens);
       if (!canon) {
@@ -347,6 +361,7 @@ export class StateEngine {
       }
       if (universals.has(canon)) continue;                            // universals always valid
       if (acts.length === 0) continue;                                // nothing to check membership against yet
+      // Lens 2.2 — declared for the finding's own iteration.
       const iterSet = f.iteration !== null ? byIter.get(f.iteration) : undefined;
       const declared = iterSet ?? union;                              // fall back to union, never the current-only set
       if (!declared.has(canon)) {
@@ -636,18 +651,18 @@ export class StateEngine {
     // version is drift, and it breaks the matrix's per-module traceability silently.
     const moduleDrift = from === 2 ? this.moduleTraceabilityErrors() : [];
 
-    // Lens-column traceability (2→3): every finding's lens must be a canonical name
-    // (or NENHUMA), and a conditional lens must have been declared for the finding's
-    // OWN iteration. Matched per-iteration, degrading to the union when the round
-    // cannot be resolved — never the current-only set (the v0.13.0 over-block trap).
-    const lensDrift = from === 2 ? this.findingLensErrors() : [];
+    // Finding-row form (2→3): each finding's lens must be canonical (or NENHUMA) and
+    // declared for its OWN iteration, and its severity must be one of 🔴/🟡/🟢. Lens
+    // matched per-iteration, degrading to the union — never the current-only set (the
+    // v0.13.0 over-block trap). Form only; whether a finding is real stays human.
+    const rowDrift = from === 2 ? this.findingRowErrors() : [];
 
-    if (!validation.valid || artifactMissing.length > 0 || moduleDrift.length > 0 || lensDrift.length > 0) {
+    if (!validation.valid || artifactMissing.length > 0 || moduleDrift.length > 0 || rowDrift.length > 0) {
       return {
         ok: false,
         error: {
           message: `Cannot advance from Phase ${from} to Phase ${targetPhase}.`,
-          missingCriteria: [...validation.missingCriteria, ...artifactMissing, ...moduleDrift, ...lensDrift],
+          missingCriteria: [...validation.missingCriteria, ...artifactMissing, ...moduleDrift, ...rowDrift],
           safeguardViolations: validation.safeguardViolations,
           specsWarnings,
         },
