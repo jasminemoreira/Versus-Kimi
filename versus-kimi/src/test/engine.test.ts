@@ -188,6 +188,11 @@ test("advancePhase blocks without exit criteria", () => {
   engine.initProject("Test", "Desc");
   const result = engine.advancePhase(1);
   assert.strictEqual(result.ok, false);
+  if (result.ok) return;
+  assert.ok(
+    result.error.missingCriteria.some((m) => m.includes("score_90")),
+    "the block must name the criterion that is missing: " + JSON.stringify(result.error.missingCriteria)
+  );
   if (!result.ok) {
     assert.ok(result.error.missingCriteria.length > 0);
   }
@@ -203,6 +208,11 @@ test("advancePhase blocks without score 90", () => {
   }
   const result = engine.advancePhase(1);
   assert.strictEqual(result.ok, false);
+  if (result.ok) return;
+  assert.ok(
+    result.error.missingCriteria.some((m) => /score\s*=\s*75/.test(m) && m.includes("90")),
+    "the block must state the score it saw and the threshold: " + JSON.stringify(result.error.missingCriteria)
+  );
 });
 
 test("advancePhase allows with score >= 90 and criteria", () => {
@@ -225,6 +235,11 @@ test("advancePhase blocks invalid transition (0→2)", () => {
   engine.initProject("Test", "Desc");
   const result = engine.advancePhase(2);
   assert.strictEqual(result.ok, false);
+  if (result.ok) return;
+  assert.ok(
+    result.error.message.includes("Phase 0") && result.error.message.includes("Phase 2"),
+    "the block must name both phases: " + result.error.message
+  );
 });
 
 test("loop Phase 2↔3 allowed", () => {
@@ -271,6 +286,8 @@ test("startIteration rejects wrong phase", () => {
   engine.initProject("Test", "Desc");
   const r = engine.startIteration(1); // currently on phase 0
   assert.strictEqual(r.ok, false);
+  if (r.ok) return;
+  assert.ok(/phase/i.test(r.error), "the refusal must say which phase is current: " + r.error);
 });
 
 // --- Safeguards ---
@@ -615,7 +632,14 @@ test("coverage_matrix stamped but not persisted BLOCKS advance", () => {
 });
 test("persisted matrix unblocks the advance", () => {
   toPhase2Stamped();
-  assert.strictEqual(engine.advancePhase(3).ok, false, "blocked without the file");
+  const beforeFile = engine.advancePhase(3);
+  assert.strictEqual(beforeFile.ok, false, "blocked without the file");
+  if (!beforeFile.ok) {
+    assert.ok(
+      beforeFile.error.missingCriteria.some((m) => m.includes("coverage-matrix.md")),
+      "the block must name the missing artifact: " + JSON.stringify(beforeFile.error.missingCriteria)
+    );
+  }
   writeCoverageMatrix(workspace);
   const r = engine.advancePhase(3);
   assert.strictEqual(r.ok, true);
@@ -626,6 +650,8 @@ test("a trivial artifact does not count as persisted", () => {
   fs.writeFileSync(path.join(workspace, "specs", "design", "coverage-matrix.md"), "| |\n");
   const r = engine.advancePhase(3);
   assert.strictEqual(r.ok, false, "empty/near-empty file must not satisfy the gate");
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("missing or empty")), "the block must say WHY, not just fail");
 });
 test("a severity grid without per-finding ids BLOCKS (structural gate)", () => {
   toPhase2Stamped();
@@ -720,7 +746,13 @@ test("a witnessed FAIL does not satisfy tests_passing", () => {
   toPhase6();
   for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
   engine.recordTestOutcome("npm test", true); // red run
-  assert.strictEqual(engine.advancePhase(7).ok, false);
+  const red = engine.advancePhase(7);
+  assert.strictEqual(red.ok, false);
+  if (red.ok) return;
+  assert.ok(
+    red.error.missingCriteria.some((m) => m.includes("witness a passing test run")),
+    "a red run must be reported as no witnessed pass: " + JSON.stringify(red.error.missingCriteria)
+  );
 });
 test("a pass witnessed in an EARLIER phase does not satisfy Phase 6", () => {
   toPhase5();
@@ -728,7 +760,13 @@ test("a pass witnessed in an EARLIER phase does not satisfy Phase 6", () => {
   for (const c of engine.getExitCriteriaWithDefs(5)) engine.markExitCriterion(5, c.criterion, true);
   engine.advancePhase(6);
   for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
-  assert.strictEqual(engine.advancePhase(7).ok, false, "the pass must be witnessed IN phase 6");
+  const blocked = engine.advancePhase(7);
+  assert.strictEqual(blocked.ok, false, "the pass must be witnessed IN phase 6");
+  if (blocked.ok) return;
+  assert.ok(
+    blocked.error.missingCriteria.some((m) => m.includes("witness a passing test run")),
+    "the block must say the engine never witnessed a green run: " + JSON.stringify(blocked.error.missingCriteria)
+  );
 });
 test("start_new_cycle BLOCKED until lessons.md is persisted", () => {
   toPhase6();
@@ -803,7 +841,14 @@ test("after a loop, the 3→4 gate re-requires Phase 3 (no stale iteration-1 sta
 
   // Phase 3 criteria were reset by the loop-back; the iteration-1 stamp is gone.
   assert.ok(engine.getExitCriteriaWithDefs(3).every((c) => !c.met), "Phase 3 stamps from iteration 1 must not survive");
-  assert.strictEqual(engine.advancePhase(4).ok, false, "3→4 must be blocked until iteration-2 criticals are confirmed addressed");
+  const stale = engine.advancePhase(4);
+  assert.strictEqual(stale.ok, false, "3→4 must be blocked until iteration-2 criticals are confirmed addressed");
+  if (!stale.ok) {
+    assert.ok(
+      stale.error.missingCriteria.some((m) => m.includes("criticals_addressed")),
+      "the block must name a Phase 3 criterion: " + JSON.stringify(stale.error.missingCriteria)
+    );
+  }
 
   for (const c of engine.getExitCriteriaWithDefs(3)) engine.markExitCriterion(3, c.criterion, true);
   assert.strictEqual(engine.advancePhase(4).ok, true, "…and passes once Phase 3 is redone");
@@ -937,7 +982,14 @@ test("looping 3→2 resets activated_lenses_recorded (re-declare per iteration)"
 
   // And the next 2→3 is blocked until the round is redone
   writeCoverageMatrix(workspace);
-  assert.strictEqual(engine.advancePhase(3).ok, false, "cannot advance again without re-doing the Phase 2 critique");
+  const again = engine.advancePhase(3);
+  assert.strictEqual(again.ok, false, "cannot advance again without re-doing the Phase 2 critique");
+  if (!again.ok) {
+    assert.ok(
+      again.error.missingCriteria.some((m) => m.includes("activated_lenses_recorded")),
+      "the block must name the lens criterion: " + JSON.stringify(again.error.missingCriteria)
+    );
+  }
 });
 
 test("a matrix of only module rows (M- echo, zero findings) BLOCKS", () => {
@@ -951,6 +1003,8 @@ test("a matrix of only module rows (M- echo, zero findings) BLOCKS", () => {
   );
   const r = engine.advancePhase(3);
   assert.strictEqual(r.ok, false, "M- rows are modules, not findings — must not satisfy the coverage gate");
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("structured form")), "the block must name the missing form");
 });
 
 test("updateProjectSpec timestamps new entries and dedups by value", () => {
@@ -1089,7 +1143,10 @@ test("an abbreviation in the lens column BLOCKS", () => {
     "# Findings\n\n| id | module | lens | severity | description |\n|---|---|---|---|---|\n" +
     "| P-01 | auth | SEG | 🔴 | sql injection in login |\n"
   );
-  assert.strictEqual(engine.advancePhase(3).ok, false, "'SEG' is not a canonical lens name");
+  const r = engine.advancePhase(3);
+  assert.strictEqual(r.ok, false, "'SEG' is not a canonical lens name");
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("P-01") && m.includes("canonical")), "the block must name the row and the reason");
 });
 
 test("the literal NENHUMA is accepted as a lens value", () => {
@@ -1177,7 +1234,10 @@ test("an empty severity cell BLOCKS", () => {
     "# Findings\n\n| id | module | lens | severity | description |\n|---|---|---|---|---|\n" +
     "| P-01 | auth | Security |  | sql injection in login |\n"
   );
-  assert.strictEqual(engine.advancePhase(3).ok, false, "a finding must carry a severity");
+  const r = engine.advancePhase(3);
+  assert.strictEqual(r.ok, false, "a finding must carry a severity");
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("P-01") && m.includes("severity")), "the block must name the row and the column");
 });
 
 test("two severity glyphs in one cell BLOCKS (ambiguous)", () => {
@@ -1186,7 +1246,10 @@ test("two severity glyphs in one cell BLOCKS (ambiguous)", () => {
     "# Findings\n\n| id | module | lens | severity | description |\n|---|---|---|---|---|\n" +
     "| P-01 | auth | Security | 🔴🟡 | can't be both critical and important |\n"
   );
-  assert.strictEqual(engine.advancePhase(3).ok, false, "exactly one severity, not two");
+  const r = engine.advancePhase(3);
+  assert.strictEqual(r.ok, false, "exactly one severity, not two");
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("P-01") && m.includes("severity")), "the block must name the row and the column");
 });
 
 test("the three canonical severities pass", () => {
