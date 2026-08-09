@@ -5,7 +5,6 @@ import * as fs from "fs";
 import * as path from "path";
 import { PhaseState } from "../state/types";
 import { getPhaseDefinition, getExitCriteriaForPhase } from "../rules/phases";
-import { CRITERION_ID_MIGRATION } from "../rules/phases";
 
 export class SidebarProvider implements vscode.TreeDataProvider<StateItem> {
   private _onDidChangeTreeData = new vscode.EventEmitter<StateItem | undefined | null>();
@@ -201,9 +200,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<StateItem> {
     const defs = getExitCriteriaForPhase(phase);
 
     const children = defs.map((def) => {
-      // Look up state, handling both old Portuguese IDs and new English IDs
       const stateEntry = state.exitCriteria.find(
-        (c) => c.phase === phase && (c.criterion === def.criterion || CRITERION_ID_MIGRATION[c.criterion] === def.criterion)
+        (c) => c.phase === phase && (c.criterion === def.criterion)
       );
       const met = stateEntry?.met ?? false;
       const icon = met ? "pass" : def.required ? "warning" : "info";
@@ -216,7 +214,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<StateItem> {
 
     const metCount = defs.filter((def) => {
       const stateEntry = state.exitCriteria.find(
-        (c) => c.phase === phase && (c.criterion === def.criterion || CRITERION_ID_MIGRATION[c.criterion] === def.criterion)
+        (c) => c.phase === phase && (c.criterion === def.criterion)
       );
       return stateEntry?.met ?? false;
     }).length;
@@ -225,7 +223,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<StateItem> {
       .filter((d) => d.required)
       .every((def) => {
         const stateEntry = state.exitCriteria.find(
-          (c) => c.phase === phase && (c.criterion === def.criterion || CRITERION_ID_MIGRATION[c.criterion] === def.criterion)
+          (c) => c.phase === phase && (c.criterion === def.criterion)
         );
         return stateEntry?.met ?? false;
       });

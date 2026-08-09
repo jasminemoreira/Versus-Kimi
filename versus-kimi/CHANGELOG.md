@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.1] - 2026-08-09
+
+Housekeeping. **Non-behavioural**: the injected guidance comes out byte-for-byte identical and no gate changed — verified by dumping `getCompleteGuidance()` before and after and diffing.
+
+### Changed
+- **`lenses.ts` is the single source for the lens definitions.** The central question, failure class and trigger of each lens lived as hand-written markdown inside the Phase 2 guidance — a second copy of names `lenses.ts` already owned, and exactly where a trigger edit like 0.7.0's three could have drifted a name away from what the gate validates. Each lens is now a `LensDef` (`name`, `question`, `failureClass`, `trigger?`), the two guidance tables are rendered from those defs, and `UNIVERSAL_LENSES`/`CONDITIONAL_LENSES` — what the tool enum and the column gate compare against — are derived from the same list instead of being typed out again.
+
+  Before touching anything, all 19 definitions in the reference were compared field by field against this build's markdown: 19 of 19 identical, which is what made the move safe. A regression test now asserts the rendered table still carries every name and the three revised triggers.
+
+- **The Portuguese→English criterion-id migration is retired.** The shim rewrote criterion ids on `load()` for projects created before the v0.3.6 rename, with a defensive mirror in the sidebar. Removed from `engine.ts` (import, `load()` call, method), `phases.ts` (the map) and `sidebar.ts` (import and three lookup predicates).
+
+  Removed on evidence, per the patch's instruction not to do it blind: a sweep of every live `.versus/state.json` on this machine found six projects still carrying Portuguese ids, all under `INDT/lixo/jogos/`, none of them a Kimi project — the only one with `agent: "kimi"` sits in the same trash folder and has none. A pre-rename project reopened after this shows its criteria as unmet; the ones in that situation are discardable here.
+
+101 tests, exit 0.
+
 ## [0.9.0] - 2026-08-09
 
 ### Added

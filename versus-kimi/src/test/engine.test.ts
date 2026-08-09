@@ -12,7 +12,7 @@ import { detectOutcome } from "../hooks/test-outcome";
 import { isAllowedPath } from "../hooks/phase-gate";
 import { ensureGlobalPermissions, permissionSnippet, pinCommonJs } from "../setup";
 import { specEntryValue, SpecEntry } from "../state/types";
-import { CONDITIONAL_LENSES } from "../rules/lenses";
+import { CONDITIONAL_LENSES, UNIVERSAL_LENS_DEFS, CONDITIONAL_LENS_DEFS } from "../rules/lenses";
 import { spawnSync } from "child_process";
 
 const MATRIX_REL = path.join("specs", "design", "coverage-matrix.md");
@@ -1143,6 +1143,20 @@ test("a conditional lens never declared in any iteration BLOCKS", () => {
   assert.strictEqual(r.ok, false, "a finding may not carry an undeclared conditional lens");
   if (r.ok) return;
   assert.ok(r.error.missingCriteria.some((m) => m.includes("G-01") && m.includes("declared")));
+});
+
+test("P2 lens table renders from lenses.ts — names, questions and triggers survive", () => {
+  // The Phase 2 lens tables are now rendered from rules/lenses.ts, not hand-written
+  // markdown. Guard the rendering: every lens name, plus the v0.12.9 trigger wording
+  // that was fixed at real cost, must still appear in the injected guidance.
+  for (const l of [...UNIVERSAL_LENS_DEFS, ...CONDITIONAL_LENS_DEFS]) {
+    assertPresent(l.name, `lens "${l.name}" must be named in the rendered table`);
+    assertPresent(l.failureClass.split(",")[0].trim(), `lens "${l.name}" failure class must render`);
+  }
+  assertPresent("including a CLI or operational tooling", "UI/UX v0.12.9 trigger must survive rendering");
+  assertPresent("resource whose cost grows with use", "Sustainability v0.12.9 trigger must survive rendering");
+  assertPresent("single-operator project activates it", "Governance v0.12.9 trigger must survive rendering");
+  assertPresent("| Lens | Central Question | Exclusive Failure Class | Activate when... |", "conditional table header renders");
 });
 
 console.log("\n=== Phase Gate Path Tests ===\n");
