@@ -17,6 +17,7 @@ import {
   SpecEntry,
   specEntryValue,
   LensActivation,
+  TestProvenance,
 } from "./types";
 import {
   isValidTransition,
@@ -376,6 +377,124 @@ export class StateEngine {
     return errs;
   }
 
+  /**
+   * Cross-gate (6→7): every CRITICAL (🔴) finding in the matrix must be traced to a
+   * test or a stated reason in specs/validation/critical-coverage.md (III.1). Phase 3
+   * resolves criticals; nothing re-checked the resolution survived the code — T26
+   * reintroduced an O(n²) PRF-01/02 said to erase, T27 never implemented an approved
+   * refinement, both found by luck. Form only: the id must be referenced; whether the
+   * test truly covers it stays human. Skips when there are no criticals.
+   */
+  private criticalCoverageErrors(): string[] {
+    const criticals = this.matrixFindings().filter((f) => f.severity.includes("🔴"));
+    if (criticals.length === 0) return [];
+    if (!this.artifactPresent("validation/critical-coverage.md")) {
+      return [
+        `[Phase 6] critical coverage: ${criticals.length} critical (🔴) finding(s) in the matrix, but ` +
+        `specs/validation/critical-coverage.md is missing or empty. For each 🔴 id, name the test that ` +
+        `covers it — or the reason there is none. Phase 3 resolved these; this confirms the code kept them resolved.`
+      ];
+    }
+    const text = this.readSpec("validation/critical-coverage.md");
+    const uncovered = criticals.filter((f) => !new RegExp(`\\b${escapeRegExp(f.id)}\\b`).test(text));
+    if (uncovered.length > 0) {
+      return [
+        `[Phase 6] critical coverage: critical finding(s) ${uncovered.map((f) => f.id).join(", ")} ` +
+        `are not referenced in specs/validation/critical-coverage.md. Each 🔴 finding must be traced to a ` +
+        `test that would catch its regression, or a stated reason there is none (e.g. the module was removed).`
+      ];
+    }
+    return [];
+  }
+
+  /**
+   * Cross-gate (6→7): every NUMBERED premise of the architecture must be traced to a
+   * test or a reason in specs/validation/premise-coverage.md (III.2). "A premise is
+   * only protected when a test would fail if it stopped holding" — T29's streaming
+   * premise (linear RSS spike) and T31's single-thread premise (SQLite across threads)
+   * both passed Phase 2 plausibility and broke in the code. CONDITIONAL: premise ids
+   * are not a stable convention in the corpus (half the projects don't number them),
+   * so the gate engages only when architecture.md HAS numbered premises — never
+   * over-blocking a project that writes them as prose. Guidance nudges numbering.
+   */
+  private premiseCoverageErrors(): string[] {
+    const arch = this.readSpec("technical/architecture.md");
+    if (!arch) return [];
+    // Numbered premises: A-1, A-06, P-A8 — the forms seen in the corpus. NOT M-/finding ids.
+    const ids = new Set<string>();
+    const re = /\b((?:P-A|A)-?\d+)\b/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(arch)) !== null) {
+      const raw = m[1].toUpperCase().replace(/^A(\d)/, "A-$1");
+      if (/^(P-A|A-)\d+$/.test(raw)) ids.add(raw);
+    }
+    if (ids.size === 0) return [];   // premises are prose here — do not over-block; guidance handles it
+    if (!this.artifactPresent("validation/premise-coverage.md")) {
+      return [
+        `[Phase 6] premise coverage: the architecture numbers ${ids.size} premise(s) (${[...ids].slice(0, 6).join(", ")}${ids.size > 6 ? ", …" : ""}), ` +
+        `but specs/validation/premise-coverage.md is missing or empty. For each numbered premise, name the test that ` +
+        `would FAIL if it stopped holding — or the reason there is none. Criticising a premise's plausibility in Phase 2 ` +
+        `is not the same as measuring whether it holds in the code.`
+      ];
+    }
+    const text = this.readSpec("validation/premise-coverage.md");
+    const uncovered = [...ids].filter((id) => !new RegExp(`\\b${escapeRegExp(id)}\\b`, "i").test(text));
+    if (uncovered.length > 0) {
+      return [
+        `[Phase 6] premise coverage: premise(s) ${uncovered.join(", ")} are not referenced in ` +
+        `specs/validation/premise-coverage.md. Each numbered premise needs a test that would measure it failing, ` +
+        `or a stated reason there is none.`
+      ];
+    }
+    return [];
+  }
+
+  /** Reads a specs/ file, or "" if absent/unreadable. */
+  private readSpec(relPath: string): string {
+    try {
+      const full = path.join(this.specsPath, relPath);
+      return fs.existsSync(full) ? fs.readFileSync(full, "utf-8") : "";
+    } catch { return ""; }
+  }
+
+  /**
+   * Stamps engine-authored provenance onto the `verify:`-gated criteria of `phase`
+   * (II.1/II.2), at the moment the transition passes. `nominal` is false when the gate
+   * was met via a degraded path — a test pass not confirmed by a harness exit_code=0,
+   * or a lens record satisfied by the legacy prose fallback — so a post-mortem sees the
+   * bypass in the criterion itself, not only if the agent happened to log a decision.
+   */
+  private stampVerificationProvenance(phase: number): void {
+    if (!this.state) return;
+    for (const def of getExitCriteriaForPhase(phase)) {
+      if (!def.verify) continue;
+      const ec = this.state.exitCriteria.find((c) => c.phase === phase && c.criterion === def.criterion);
+      if (!ec) continue;
+      if (def.verify === "test-pass") {
+        const t = this.state.lastTestOutcome;
+        if (!t) continue;
+        const nominal = t.source === "harness" && t.exitCode === 0;
+        ec.verifiedBy = {
+          path: "test-pass",
+          nominal,
+          at: new Date().toISOString(),
+          note: nominal ? undefined : "pass NOT confirmed by a harness exit_code=0 — classified via output markers or a non-harness source",
+          snapshot: { outcome: t.outcome, command: t.command, exitCode: t.exitCode, source: t.source, outputSha256: t.outputSha256, at: t.at },
+        };
+      } else if (def.verify === "lenses-recorded") {
+        const cur = (this.state.activatedLenses ?? []).find((a) => a.iteration === this.critiqueIteration());
+        const nominal = !!cur;
+        ec.verifiedBy = {
+          path: "lenses-recorded",
+          nominal,
+          at: new Date().toISOString(),
+          note: nominal ? undefined : "satisfied via the legacy free-text fallback, not the structured record",
+          snapshot: cur ? { iteration: cur.iteration, againstVersion: cur.againstVersion, recordedAt: cur.recordedAt } : {},
+        };
+      }
+    }
+  }
+
   /** How many lines of a specs/ artifact match `pattern`. Used for structural
    *  gates (e.g. per-finding rows in the coverage matrix). Form, not content. */
   countArtifactRows(relPath: string, pattern: string): number {
@@ -591,9 +710,21 @@ export class StateEngine {
         );
       }
       if (def.verify === "test-pass" && !this.witnessedTestPass(phase)) {
+        const t = this.state?.lastTestOutcome;
+        // Distinguish "nothing was observed" from "observed and not a pass" — the old
+        // message conflated them, and an agent whose suite was green had no signal that
+        // the hook, not the tests, was the problem (I.3).
+        const seen = t
+          ? `The last run the engine recorded was outcome="${t.outcome}"` +
+            `${t.command ? ` for \`${t.command}\`` : ""} at ${t.at}` +
+            `${t.phase !== phase ? ` (in Phase ${t.phase}, not this phase)` : ""}` +
+            `${typeof t.exitCode === "number" ? `, exit_code=${t.exitCode}` : ""}.` +
+            (t.outcome === "unknown" ? ` "unknown" means the hook could not classify the output — check the run's output, or re-run.` : "")
+          : `The engine has recorded NO test run in this phase.`;
         out.push(
-          `[Phase ${phase}] ${def.criterion}: the engine did not witness a passing test run in this phase. ` +
-          `Run your test suite so the result is verified by the test-outcome hook (S4: never assume tests passed — execute and verify). ` +
+          `[Phase ${phase}] ${def.criterion}: no witnessed passing test run in this phase. ${seen} ` +
+          `A green run must be seen by the test-outcome hook (S4: never assume tests passed — execute and verify). ` +
+          `If the suite is green but this stays red, the run was not classified as a pass — inspect get_phase_state.lastTestOutcome. ` +
           `Marking the criterion met is not enough.`
         );
       }
@@ -657,17 +788,27 @@ export class StateEngine {
     // v0.13.0 over-block trap). Form only; whether a finding is real stays human.
     const rowDrift = from === 2 ? this.findingRowErrors() : [];
 
-    if (!validation.valid || artifactMissing.length > 0 || moduleDrift.length > 0 || rowDrift.length > 0) {
+    // Phase 6 re-verifies what earlier phases decided survived the code (III.1/III.2):
+    // every critical finding, and every numbered premise, traced to a test or a reason.
+    const coverageDrift = from === 6
+      ? [...this.criticalCoverageErrors(), ...this.premiseCoverageErrors()]
+      : [];
+
+    if (!validation.valid || artifactMissing.length > 0 || moduleDrift.length > 0 || rowDrift.length > 0 || coverageDrift.length > 0) {
       return {
         ok: false,
         error: {
           message: `Cannot advance from Phase ${from} to Phase ${targetPhase}.`,
-          missingCriteria: [...validation.missingCriteria, ...artifactMissing, ...moduleDrift, ...rowDrift],
+          missingCriteria: [...validation.missingCriteria, ...artifactMissing, ...moduleDrift, ...rowDrift, ...coverageDrift],
           safeguardViolations: validation.safeguardViolations,
           specsWarnings,
         },
       };
     }
+
+    // Gates passed — stamp engine-authored provenance on the verify-criteria we just
+    // checked, before the transition commits (II.1/II.2).
+    this.stampVerificationProvenance(from);
 
     // Valid transition
     this.state.history.push({
@@ -892,23 +1033,39 @@ export class StateEngine {
 
   /**
    * Records the outcome of a test run. Only FAILURES accumulate: a green run is
-   * the end of the work, never a loop, so it clears the counter. Blocking is
-   * decided by the caller reading getLoopCounter() BEFORE the run.
+   * the end of the work, never a loop, so it clears the counter. An `unknown` run
+   * (unclassifiable output) is RECORDED — so it cannot leave a stale `fail` frozen
+   * in place (I.1) — but it is not a failure: it neither satisfies the gate nor
+   * counts toward S6. Blocking is decided by the caller reading getLoopCounter()
+   * BEFORE the run. `provenance` (I.5) is stored verbatim when supplied.
    */
-  recordTestOutcome(command: string, failed: boolean): { count: number } {
+  recordTestOutcome(
+    command: string,
+    outcome: "pass" | "fail" | "unknown",
+    provenance?: TestProvenance
+  ): { count: number } {
     if (!this.state) return { count: 0 };
 
     // Record what the engine actually witnessed — this is what gates tests_passing
     // (S4), independent of the S6 loop-counter logic below.
     this.state.lastTestOutcome = {
-      outcome: failed ? "fail" : "pass",
+      outcome,
       phase: this.state.currentPhase,
       at: new Date().toISOString(),
+      command,
+      ...(provenance ?? {}),
     };
 
-    if (!failed) {
+    if (outcome === "pass") {
       this.resetLoopCounter();  // resetLoopCounter saves, persisting lastTestOutcome too
       return { count: 0 };
+    }
+
+    if (outcome === "unknown") {
+      // Unclassifiable output is not a failure: leave the loop counter untouched,
+      // just persist the record so the stale-fail freeze cannot happen.
+      this.save();
+      return { count: this.state.loopCounter?.count ?? 0 };
     }
 
     const normalized = this.normalizeCommandPattern(command);
@@ -1075,4 +1232,8 @@ export class StateEngine {
 
 function dedupe(arr: string[]): string[] {
   return [...new Set(arr)];
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

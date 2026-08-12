@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.10.0] - 2026-08-12
+
+Post-batch lot (v0.15 → v0.16.2 of the reference build), adapted to Kimi.
+
+### Added
+- **A test run now has three outcomes, not two: `pass`, `fail` and `unknown`.** An unreadable run — killed by timeout, moved to the background, aborted — used to be indistinguishable from a red one. It is now recorded as `unknown`: it does **not** satisfy `tests_passing`, does **not** count toward S6, but **does** overwrite a stale `fail`, so a project cannot sit frozen on an outcome nobody produced.
+
+- **The outcome is classified from the harness, not from the reporter's prose.** Kimi carries no `exit_code` in the hook payload, but it carries the equivalent: the Bash tool answers `ok` on exit 0 and `error` otherwise, and the runtime turns that into the event name — `PostToolUse` for a clean exit, `PostToolUseFailure` (with `Command failed with exit code: N`) for anything else. That signal is authoritative; the marker regexes are now only the fallback. A green suite whose reporter phrases its summary unusually is no longer read as red.
+
+- **Provenance on every recorded run** (`source`, `toolUseId`, `sessionId`, `outputSha256`, `outputBytes`, `exitCode`). It does not prevent a forged pass — it makes one legible in a post-mortem, which is exactly what a bypassed gate leaves no trace of otherwise.
+
+- **Exit criteria record HOW they were verified (`verifiedBy`), not only that they were.** A pass confirmed by the harness is `nominal`; one inferred from markers alone is stamped non-nominal with the reason.
+
+- **`specs/validation/critical-coverage.md` BLOCKS 6→7 when the matrix has 🔴 findings.** One row per critical id — the test that catches its regression, or the stated reason there is none. The refusal names the missing id. In the batch, a critical said to be erased in Phase 3 came back in the code and was found only by luck.
+
+- **`specs/validation/premise-coverage.md` BLOCKS 6→7 when the architecture NUMBERS its premises.** One row per premise — the test that would fail if it stopped holding. Prose premises do not trigger the gate (premise ids are not a universal convention), and Phase 1 now asks for numbered premises precisely so Phase 6 can protect them.
+
+- **Guidance:** Phase 1 requires each `## V(N)` module table written COMPLETE, not as a delta (a partial table is indistinguishable, in the text, from one that deleted the rest). Phase 6 gains detection power (a green suite that *cannot* fail on the defect is not protection), the four practices that paid off in the batch, and the rule that a test fix must name the SCENARIO, not just the assertion.
+
+- **Nine new conditional-lens triggers.**
+
+### Kimi-specific
+- The `unknown` outcome carries an explicit instruction to re-run in the foreground with a `timeout` — under Kimi a backgrounded run is never witnessed, so the gate would otherwise stay shut with no visible cause. Delivered through the deferred-notice channel, since Kimi discards PostToolUse output.
+
 ## [0.9.2] - 2026-08-09
 
 ### Added

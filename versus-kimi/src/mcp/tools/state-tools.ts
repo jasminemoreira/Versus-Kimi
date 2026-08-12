@@ -97,6 +97,10 @@ export function handleGetPhaseState(engine: StateEngine): string {
     decisionsCount: state.decisions.length,
     recentDecisions,
     safeguards: state.safeguards.map((s) => ({ id: s.id, status: s.status })),
+    // What the test-outcome hook last witnessed (I.2). Without this a stuck
+    // tests_passing gate was undiagnosable through the MCP interface — the agent had
+    // to read .versus/state.json directly, bypassing the interface the methodology offers.
+    lastTestOutcome: state.lastTestOutcome ?? null,
     updatedAt: state.updatedAt,
   };
 

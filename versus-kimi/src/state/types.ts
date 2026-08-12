@@ -14,8 +14,24 @@ export interface PhaseState {
   safeguards: SafeguardState[];
   loopCounter: LoopCounter;
   /** Last test run the test-outcome hook actually witnessed. Gates tests_passing:
-   *  the engine must have seen a green run in the phase, not just be told it passed. */
-  lastTestOutcome?: { outcome: "pass" | "fail"; phase: number; at: string };
+   *  the engine must have seen a green run in the phase, not just be told it passed.
+   *  `unknown` is recorded too (I.1): an unclassifiable run must not leave a stale
+   *  `fail` frozen in place — but it does not satisfy the gate (only `pass` does) and
+   *  does not count toward S6. `command` and the provenance fields (I.5) make the
+   *  record legible in a post-mortem; provenance is populated only when the hook can
+   *  supply it. */
+  lastTestOutcome?: {
+    outcome: "pass" | "fail" | "unknown";
+    phase: number;
+    at: string;
+    command?: string;
+    source?: "harness" | "manual" | "unknown";
+    toolUseId?: string;
+    sessionId?: string;
+    outputSha256?: string;
+    outputBytes?: number;
+    exitCode?: number;
+  };
   /** Lens activation for Phase 2, recorded STRUCTURALLY by record_activated_lenses —
    *  ONE entry per critique iteration (the 2↔3 loop re-declares against each new
    *  architecture version). Was a free-text decision consumers had to grep for
@@ -31,6 +47,18 @@ export interface PhaseState {
   createdAt: string;             // ISO timestamp
   updatedAt: string;
   history: PhaseTransition[];    // transition log
+}
+
+/** Provenance for a recorded test outcome (I.5). Does not prevent forgery — it makes
+ *  a workaround LEGIBLE in a post-mortem, which is what the four bypassed projects
+ *  lacked. Populated only with whatever the hook payload actually supplies. */
+export interface TestProvenance {
+  source?: "harness" | "manual" | "unknown";
+  toolUseId?: string;
+  sessionId?: string;
+  outputSha256?: string;
+  outputBytes?: number;
+  exitCode?: number;
 }
 
 /** Which lenses one critique iteration activated, and why the others were not.
@@ -107,6 +135,18 @@ export interface ExitCriterionState {
   criterion: string;
   met: boolean;
   details?: string;
+  /** Engine-authored provenance for a `verify:`-gated criterion (II.1/II.2): HOW the
+   *  gate was satisfied and whether the path was the nominal one. Written by the engine
+   *  when the transition passes — not self-reported — so a post-mortem sees a degraded
+   *  path (hook not nominal, legacy fallback) without depending on the agent having
+   *  written a separate decision. Only the two verify-criteria carry it. */
+  verifiedBy?: {
+    path: "test-pass" | "lenses-recorded";
+    nominal: boolean;                 // false = satisfied via a degraded path
+    at: string;
+    note?: string;
+    snapshot?: Record<string, unknown>;
+  };
 }
 
 export interface SafeguardState {

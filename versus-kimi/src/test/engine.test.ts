@@ -373,6 +373,12 @@ test("P6 critical terms present", () => {
   assertPresent("Session Renewal", "P6 Step 0 session renewal");
   assertPresent("Playwright", "primary UI tool recommendation for web SPA");
   assertPresent("Detox", "primary UI tool recommendation for React Native");
+  // Post-batch additions (III.1–III.4, IV)
+  assertPresent("critical-coverage.md", "III.1 critical coverage artifact");
+  assertPresent("premise-coverage.md", "III.2 premise coverage artifact");
+  assertPresent("Detection power", "III.3 detection-power recommendation");
+  assertPresent("Measure by stage before optimizing", "IV practice 1");
+  assertPresent("name the SCENARIO, not just the assertion", "IV test-fix scenario record");
 });
 
 test("P7 critical terms present", () => {
@@ -399,6 +405,15 @@ function writeCoverageMatrix(ws: string): void {
     "| A-03 | auth | Architectural | 🟡 | auth imports ui for its toast → cycle |\n" +
     "| P-02 | ui   | Security | 🔴 | stored XSS via unescaped comment body |\n";
   fs.writeFileSync(path.join(ws, "specs", "design", "coverage-matrix.md"), content);
+}
+
+function writeCriticalCoverage(ws: string): void {
+  fs.writeFileSync(
+    path.join(ws, "specs", "validation", "critical-coverage.md"),
+    "# Critical coverage\n\n| finding | test | note |\n|---|---|---|\n" +
+    "| P-01 | test/auth.test.ts::rejects sql in login | regression test added |\n" +
+    "| P-02 | test/ui.test.ts::escapes comment body | regression test added |\n"
+  );
 }
 
 function writeSeverityGrid(ws: string): void {
@@ -473,6 +488,7 @@ function toPhase6() {
   for (const c of engine.getExitCriteriaWithDefs(5)) engine.markExitCriterion(5, c.criterion, true);
   engine.advancePhase(6);
   assert.strictEqual(engine.getPhaseState()!.currentPhase, 6);
+  writeCriticalCoverage(workspace); // III.1: leaving Phase 6 requires every 🔴 finding traced
 }
 
 function toPhase5() {
@@ -491,7 +507,7 @@ function toPhase5() {
 test("passing runs never accumulate — final verification is never blocked", () => {
   toPhase5();
   for (let i = 0; i < 10; i++) {
-    engine.recordTestOutcome("npm test", false);
+    engine.recordTestOutcome("npm test", "pass");
   }
   assert.strictEqual(engine.getLoopCounter().count, 0);
   assert.strictEqual(engine.isLoopBlocked(), false);
@@ -499,11 +515,11 @@ test("passing runs never accumulate — final verification is never blocked", ()
 
 test("a passing run clears failures accumulated before it", () => {
   toPhase5();
-  engine.recordTestOutcome("npm test", true);
-  engine.recordTestOutcome("npm test", true);
+  engine.recordTestOutcome("npm test", "fail");
+  engine.recordTestOutcome("npm test", "fail");
   assert.strictEqual(engine.getLoopCounter().count, 2);
 
-  engine.recordTestOutcome("npm test", false);
+  engine.recordTestOutcome("npm test", "pass");
   assert.strictEqual(engine.getLoopCounter().count, 0);
   assert.strictEqual(engine.isLoopBlocked(), false);
 });
@@ -512,7 +528,7 @@ test("blind loop: consecutive failures with no diagnosis block", () => {
   toPhase5();
   for (let i = 0; i < LOOP_FAILURE_THRESHOLD; i++) {
     assert.strictEqual(engine.isLoopBlocked(), false, `should not block before failure ${i + 1}`);
-    engine.recordTestOutcome("npm test", true);
+    engine.recordTestOutcome("npm test", "fail");
   }
   assert.strictEqual(engine.getLoopCounter().count, LOOP_FAILURE_THRESHOLD);
   assert.strictEqual(engine.isLoopBlocked(), true, "blocked after threshold undiagnosed failures");
@@ -520,7 +536,7 @@ test("blind loop: consecutive failures with no diagnosis block", () => {
 
 test("named diagnosis clears the counter and unblocks", () => {
   toPhase5();
-  for (let i = 0; i < LOOP_FAILURE_THRESHOLD; i++) engine.recordTestOutcome("npm test", true);
+  for (let i = 0; i < LOOP_FAILURE_THRESHOLD; i++) engine.recordTestOutcome("npm test", "fail");
   assert.strictEqual(engine.isLoopBlocked(), true);
 
   engine.recordDecision(5, "diagnosis", "Duplicate const in card.ts shadowed the export.");
@@ -540,27 +556,27 @@ test("real session: 4 failures, 4 named causes — never blocked", () => {
   ];
   for (const r of rounds) {
     assert.strictEqual(engine.isLoopBlocked(), false, `blocked before running ${r.cmd} — regression`);
-    engine.recordTestOutcome(r.cmd, true);
+    engine.recordTestOutcome(r.cmd, "fail");
     engine.recordDecision(5, "diagnosis", r.cause);
   }
   assert.strictEqual(engine.isLoopBlocked(), false, "four diagnosed failures are the normal cycle, not a loop");
 
   // And the green verification run goes through.
-  engine.recordTestOutcome("npm test", false);
+  engine.recordTestOutcome("npm test", "pass");
   assert.strictEqual(engine.getLoopCounter().count, 0);
 });
 
 test("non-diagnosis decisions do NOT clear the counter", () => {
   toPhase5();
-  for (let i = 0; i < LOOP_FAILURE_THRESHOLD; i++) engine.recordTestOutcome("npm test", true);
+  for (let i = 0; i < LOOP_FAILURE_THRESHOLD; i++) engine.recordTestOutcome("npm test", "fail");
   engine.recordDecision(5, "testing", "ran the suite again");
   assert.strictEqual(engine.isLoopBlocked(), true, "only a named diagnosis clears S6");
 });
 
 test("different suites are different patterns (S6 speaks of modules)", () => {
   toPhase5();
-  engine.recordTestOutcome("npm test -- consent", true);
-  engine.recordTestOutcome("npm test -- link", true);
+  engine.recordTestOutcome("npm test -- consent", "fail");
+  engine.recordTestOutcome("npm test -- link", "fail");
   // Second suite starts its own count instead of compounding the first.
   assert.strictEqual(engine.getLoopCounter().count, 1);
   assert.ok(engine.getLoopCounter().pattern.includes("link"));
@@ -569,7 +585,7 @@ test("different suites are different patterns (S6 speaks of modules)", () => {
 test("a blocked S6 vetoes the phase transition, and says why", () => {
   toPhase5();
   for (const c of engine.getExitCriteriaWithDefs(5)) engine.markExitCriterion(5, c.criterion, true);
-  for (let i = 0; i < LOOP_FAILURE_THRESHOLD; i++) engine.recordTestOutcome("npm test", true);
+  for (let i = 0; i < LOOP_FAILURE_THRESHOLD; i++) engine.recordTestOutcome("npm test", "fail");
 
   // Advancing must not be an escape from a blind loop — but the refusal must be legible.
   const blocked = engine.advancePhase(6);
@@ -583,7 +599,7 @@ test("a blocked S6 vetoes the phase transition, and says why", () => {
 test("advancePhase clears the counter (after the loop is diagnosed)", () => {
   toPhase5();
   for (const c of engine.getExitCriteriaWithDefs(5)) engine.markExitCriterion(5, c.criterion, true);
-  for (let i = 0; i < LOOP_FAILURE_THRESHOLD; i++) engine.recordTestOutcome("npm test", true);
+  for (let i = 0; i < LOOP_FAILURE_THRESHOLD; i++) engine.recordTestOutcome("npm test", "fail");
 
   engine.recordDecision(5, "diagnosis", "Named the cause.");
   const r = engine.advancePhase(6);
@@ -594,7 +610,7 @@ test("advancePhase clears the counter (after the loop is diagnosed)", () => {
 
 test("S6 safeguard reports violated when blocked", () => {
   toPhase5();
-  for (let i = 0; i < LOOP_FAILURE_THRESHOLD; i++) engine.recordTestOutcome("npm test", true);
+  for (let i = 0; i < LOOP_FAILURE_THRESHOLD; i++) engine.recordTestOutcome("npm test", "fail");
   const s6 = validateSafeguard("S6", engine.getPhaseState()!);
   assert.strictEqual(s6.status, "violated");
   assert.ok(s6.details.includes("diagnosis"), "must point at the escape hatch");
@@ -672,7 +688,9 @@ test("countArtifactRows counts finding rows, not grid rows", () => {
   assert.strictEqual(engine.countArtifactRows("design/coverage-matrix.md", pat), 0);
   writeCoverageMatrix(workspace);
   assert.strictEqual(engine.countArtifactRows("design/coverage-matrix.md", pat), 3);
-});test("a prose architecture (no module table) BLOCKS P1→P2", () => {
+});
+
+test("a prose architecture (no module table) BLOCKS P1→P2", () => {
   engine.initProject("Test", "Desc");
   engine.updateScore(95, makeFullBreakdown(95));
   for (const c of engine.getExitCriteriaWithDefs(0)) engine.markExitCriterion(0, c.criterion, true);
@@ -702,7 +720,9 @@ test("a single finding row satisfies the gate (no ≥3 floor)", () => {
     "| P-01 | auth | Security | 🔴 | the one finding this simple design has: token never expires |\n"
   );
   assert.strictEqual(engine.advancePhase(3).ok, true, "one real finding is enough — the gate must not impose a count floor");
-});test("artifactPresent: existence + non-trivial content", () => {
+});
+
+test("artifactPresent: existence + non-trivial content", () => {
   engine.initProject("Test", "Desc");
   assert.strictEqual(engine.artifactPresent("design/coverage-matrix.md"), false);
   writeCoverageMatrix(workspace);
@@ -732,12 +752,14 @@ test("tests_passing stamped but no witnessed green run BLOCKS P6→P7", () => {
   const blocked = engine.advancePhase(7);
   assert.strictEqual(blocked.ok, false);
   if (blocked.ok) return;
-  assert.ok(blocked.error.missingCriteria.some((m) => m.includes("witness a passing test run")));
+  const msg = blocked.error.missingCriteria.find((m) => m.includes("no witnessed passing test run"))!;
+  assert.ok(msg, "the refusal must name the missing witnessed pass");
+  assert.ok(msg.includes("recorded NO test run in this phase"), "with nothing observed, the message says so — not 'failed'");
 });
 test("a witnessed green run in Phase 6 unblocks P6→P7", () => {
   toPhase6();
   for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
-  engine.recordTestOutcome("npm test", false); // the hook witnesses a pass in phase 6
+  engine.recordTestOutcome("npm test", "pass"); // the hook witnesses a pass in phase 6
   const r = engine.advancePhase(7);
   assert.strictEqual(r.ok, true);
   assert.strictEqual(engine.getPhaseState()!.currentPhase, 7);
@@ -745,33 +767,21 @@ test("a witnessed green run in Phase 6 unblocks P6→P7", () => {
 test("a witnessed FAIL does not satisfy tests_passing", () => {
   toPhase6();
   for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
-  engine.recordTestOutcome("npm test", true); // red run
-  const red = engine.advancePhase(7);
-  assert.strictEqual(red.ok, false);
-  if (red.ok) return;
-  assert.ok(
-    red.error.missingCriteria.some((m) => m.includes("witness a passing test run")),
-    "a red run must be reported as no witnessed pass: " + JSON.stringify(red.error.missingCriteria)
-  );
+  engine.recordTestOutcome("npm test", "fail"); // red run
+  assert.strictEqual(engine.advancePhase(7).ok, false);
 });
 test("a pass witnessed in an EARLIER phase does not satisfy Phase 6", () => {
   toPhase5();
-  engine.recordTestOutcome("npm test", false); // green run, but in phase 5
+  engine.recordTestOutcome("npm test", "pass"); // green run, but in phase 5
   for (const c of engine.getExitCriteriaWithDefs(5)) engine.markExitCriterion(5, c.criterion, true);
   engine.advancePhase(6);
   for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
-  const blocked = engine.advancePhase(7);
-  assert.strictEqual(blocked.ok, false, "the pass must be witnessed IN phase 6");
-  if (blocked.ok) return;
-  assert.ok(
-    blocked.error.missingCriteria.some((m) => m.includes("witness a passing test run")),
-    "the block must say the engine never witnessed a green run: " + JSON.stringify(blocked.error.missingCriteria)
-  );
+  assert.strictEqual(engine.advancePhase(7).ok, false, "the pass must be witnessed IN phase 6");
 });
 test("start_new_cycle BLOCKED until lessons.md is persisted", () => {
   toPhase6();
   for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
-  engine.recordTestOutcome("npm test", false);
+  engine.recordTestOutcome("npm test", "pass");
   engine.advancePhase(7);
   for (const c of engine.getExitCriteriaWithDefs(7)) engine.markExitCriterion(7, c.criterion, true);
 
@@ -1457,6 +1467,132 @@ test("the MCP server survives a project that declares type:module", () => {
   } finally {
     fs.rmSync(project, { recursive: true, force: true });
   }
+});
+
+test("P1 post-batch terms present (numbered premises + full version table)", () => {
+  assertPresent("number each premise", "III.2 Phase-1 premise numbering nudge");
+  assertPresent("write each `## V(N)` table COMPLETE", "III.4 full module table per version");
+});
+
+test("Phase 6 blocks 6→7 until every critical finding is covered (III.1)", () => {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  engine.recordTestOutcome("npm test", "pass", { source: "harness", exitCode: 0 });
+  fs.rmSync(path.join(workspace, "specs", "validation", "critical-coverage.md")); // undo what toPhase6 wrote
+  const r = engine.advancePhase(7);
+  assert.strictEqual(r.ok, false, "P-01/P-02 (🔴) must be traced before sign-off");
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("critical coverage") && m.includes("critical-coverage.md")));
+  writeCriticalCoverage(workspace);
+  assert.strictEqual(engine.advancePhase(7).ok, true, "…and passes once every critical is traced");
+});
+
+test("Phase 6 requires premise coverage when premises are NUMBERED (III.2)", () => {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  engine.recordTestOutcome("npm test", "pass", { source: "harness", exitCode: 0 });
+  fs.writeFileSync(
+    path.join(workspace, "specs", "technical", "architecture.md"),
+    "# Architecture\n\n| id | module | responsibility | interface | depends-on |\n|---|---|---|---|---|\n" +
+    "| M-01 | auth | a | l() | db |\n| M-02 | ui | r | r() | auth |\n\n" +
+    "## Premissas\n| id | premissa | consequência |\n|---|---|---|\n| A-1 | single-thread | races |\n| A-2 | streaming migration | memory spike |\n"
+  );
+  const r = engine.advancePhase(7);
+  assert.strictEqual(r.ok, false, "numbered premises A-1/A-2 must be traced to tests");
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("premise coverage")));
+  fs.writeFileSync(
+    path.join(workspace, "specs", "validation", "premise-coverage.md"),
+    "# Premise coverage\n\n| premise | test |\n|---|---|\n| A-1 | test/threads.test.ts |\n| A-2 | test/memory.test.ts |\n"
+  );
+  assert.strictEqual(engine.advancePhase(7).ok, true);
+});
+
+test("a critical finding absent from the coverage file blocks, naming it (III.1)", () => {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  engine.recordTestOutcome("npm test", "pass", { source: "harness", exitCode: 0 });
+  fs.writeFileSync(
+    path.join(workspace, "specs", "validation", "critical-coverage.md"),
+    "# Critical coverage\n\n| finding | test | note |\n|---|---|---|\n" +
+    "| P-01 | test/auth.test.ts::rejects sql injection in the login path | regression test added |\n" // P-02 omitted, file non-trivial
+  );
+  const r = engine.advancePhase(7);
+  assert.strictEqual(r.ok, false);
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("P-02") && m.includes("critical coverage")));
+});
+
+test("a pass classified without exit_code is marked non-nominal (II.2 degradation)", () => {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  engine.recordTestOutcome("npm test", "pass"); // markers-only, no exit_code / source
+  assert.strictEqual(engine.advancePhase(7).ok, true);
+  const ec = engine.getExitCriteriaState(6).find((c) => c.criterion === "tests_passing")!;
+  assert.strictEqual(ec.verifiedBy!.nominal, false, "a pass not confirmed by a harness exit_code=0 is a degraded path");
+  assert.ok(ec.verifiedBy!.note && ec.verifiedBy!.note.includes("exit_code"), "and the record says why");
+});
+
+test("a recorded pass carries provenance when supplied (I.5)", () => {
+  toPhase5();
+  engine.recordTestOutcome("npm test", "pass", {
+    source: "harness", toolUseId: "tu_1", sessionId: "s_1",
+    outputSha256: "abc", outputBytes: 42, exitCode: 0,
+  });
+  const t = engine.getPhaseState()!.lastTestOutcome!;
+  assert.strictEqual(t.source, "harness");
+  assert.strictEqual(t.exitCode, 0);
+  assert.strictEqual(t.toolUseId, "tu_1");
+});
+
+test("prose premises (no ids) do NOT trigger the premise gate — no over-block (III.2)", () => {
+  toPhase6(); // writeArchitectureDoc has a prose "## Assumptions", no A-\d+
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  engine.recordTestOutcome("npm test", "pass", { source: "harness", exitCode: 0 });
+  assert.strictEqual(engine.advancePhase(7).ok, true, "premise ids are not a stable convention — prose must not be gated");
+});
+
+test("tests_passing is stamped with nominal provenance when the pass came via exit_code=0 (II)", () => {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  engine.recordTestOutcome("npm test", "pass", { source: "harness", exitCode: 0, outputSha256: "abc" });
+  assert.strictEqual(engine.advancePhase(7).ok, true);
+  const ec = engine.getExitCriteriaState(6).find((c) => c.criterion === "tests_passing")!;
+  assert.ok(ec.verifiedBy, "the engine stamps HOW the gate was verified, not just that it was");
+  assert.strictEqual(ec.verifiedBy!.path, "test-pass");
+  assert.strictEqual(ec.verifiedBy!.nominal, true, "harness exit_code=0 is the nominal path");
+  assert.strictEqual((ec.verifiedBy!.snapshot as Record<string, unknown>).exitCode, 0);
+});
+
+test("the refusal distinguishes observed-fail from nothing-observed (I.3)", () => {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  engine.recordTestOutcome("npm test", "fail"); // the engine DID observe — a fail
+  const r = engine.advancePhase(7);
+  assert.strictEqual(r.ok, false);
+  if (r.ok) return;
+  const msg = r.error.missingCriteria.find((m) => m.includes("no witnessed passing test run"))!;
+  assert.ok(msg.includes('outcome="fail"'), "the message must say what the engine saw, not just that it did not pass");
+  assert.ok(msg.includes("npm test"), "and which command it was");
+});
+
+test("unknown does not count toward S6 (I.1)", () => {
+  toPhase5();
+  for (let i = 0; i < 5; i++) engine.recordTestOutcome("npm test", "unknown");
+  assert.strictEqual(engine.getLoopCounter().count, 0, "an unreadable run is not a failing run");
+  assert.strictEqual(engine.isLoopBlocked(), false);
+});
+
+test("unknown outcome is recorded, not dropped — no frozen stale fail (I.1)", () => {
+  toPhase5();
+  engine.recordTestOutcome("npm test", "fail");
+  assert.strictEqual(engine.getPhaseState()!.lastTestOutcome!.outcome, "fail");
+  // An unclassifiable run must OVERWRITE the stale fail, not be silently dropped.
+  engine.recordTestOutcome("npm test", "unknown");
+  const t = engine.getPhaseState()!.lastTestOutcome!;
+  assert.strictEqual(t.outcome, "unknown", "unknown must replace the stale fail, not vanish");
+  assert.strictEqual(t.command, "npm test", "the command is recorded for the refusal message");
+  assert.strictEqual(engine.witnessedTestPass(5), false, "unknown does not satisfy the gate");
 });
 
 console.log("\n=== All tests completed ===\n");
