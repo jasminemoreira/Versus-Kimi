@@ -8,7 +8,7 @@ import { StateEngine, LOOP_FAILURE_THRESHOLD } from "../state/engine";
 import { ScoreBreakdown } from "../state/types";
 import { getCompleteGuidance } from "../rules/full-guidance";
 import { validateSafeguard } from "../rules/safeguards";
-import { detectOutcome } from "../hooks/test-outcome";
+import { detectOutcome, detectExitCode, classify } from "../hooks/test-outcome";
 import { isAllowedPath } from "../hooks/phase-gate";
 import { ensureGlobalPermissions, permissionSnippet, pinCommonJs } from "../setup";
 import { specEntryValue, SpecEntry } from "../state/types";
@@ -1593,6 +1593,70 @@ test("unknown outcome is recorded, not dropped — no frozen stale fail (I.1)", 
   assert.strictEqual(t.outcome, "unknown", "unknown must replace the stale fail, not vanish");
   assert.strictEqual(t.command, "npm test", "the command is recorded for the refusal message");
   assert.strictEqual(engine.witnessedTestPass(5), false, "unknown does not satisfy the gate");
+});
+
+test("a non-English runner is unclassifiable by markers but the echo is language-agnostic", () => {
+  // The Enduro case: a Portuguese runner prints "67/67 testes passaram" — markers can't read it.
+  const ptOutput = "67/67 testes passaram   (37 positivos, 30 negativos)";
+  assert.strictEqual(detectOutcome(ptOutput), "unknown", "markers are English-only, by design — not expanded per locale");
+  // With the sanctioned echo, the exit status is a number, readable in any language.
+  assert.strictEqual(detectExitCode(ptOutput + "\nVERSUS_TEST_EXIT=0"), 0);
+  assert.strictEqual(detectExitCode("1 teste falhou\nVERSUS_TEST_EXIT=1"), 1);
+});
+
+test("a pass classified by markers alone (no observed exit) is NON-nominal (II)", () => {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  engine.recordTestOutcome("npm test", "pass"); // no exitCode/exitSource — markers only
+  assert.strictEqual(engine.advancePhase(7).ok, true);
+  const ec = engine.getExitCriteriaState(6).find((c) => c.criterion === "tests_passing")!;
+  assert.strictEqual(ec.verifiedBy!.nominal, false);
+  assert.ok(ec.verifiedBy!.note && ec.verifiedBy!.note.includes("VERSUS_TEST_EXIT"), "the record names the missing observed-exit path");
+});
+
+test("a pass observed via the exit echo is NOMINAL (II) — no harness exit_code needed", () => {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  // Simulate what the hook records when the echo supplied the status on a no-exit_code harness.
+  engine.recordTestOutcome("npm test; echo \"VERSUS_TEST_EXIT=$?\"", "pass", { source: "harness", exitCode: 0, exitSource: "echo" });
+  assert.strictEqual(engine.advancePhase(7).ok, true);
+  const ec = engine.getExitCriteriaState(6).find((c) => c.criterion === "tests_passing")!;
+  assert.strictEqual(ec.verifiedBy!.nominal, true, "an observed exit status of 0 is nominal, whether from harness or echo");
+  assert.strictEqual((ec.verifiedBy!.snapshot as Record<string, unknown>).exitSource, "echo");
+});
+
+test("detectExitCode reads the VERSUS_TEST_EXIT token, last occurrence wins", () => {
+  assert.strictEqual(detectExitCode("67/67 testes passaram\nVERSUS_TEST_EXIT=0"), 0);
+  assert.strictEqual(detectExitCode("boom\nVERSUS_TEST_EXIT=1"), 1);
+  assert.strictEqual(detectExitCode("VERSUS_TEST_EXIT=1\n...retry...\nVERSUS_TEST_EXIT=0"), 0, "the final run's status is the one that counts");
+  assert.strictEqual(detectExitCode("no token here"), undefined);
+});
+
+// Kimi-only. The other builds put the harness signal first because theirs is inert;
+// here it is live, and it reports the COMPOUND command's status — which the echo
+// itself forces to 0. Harness-first would read every red suite as green in exactly
+// the invocation the guidance now prescribes. Do not "restore" the usual order.
+test("the echo OUTRANKS Kimi's event-name signal — the compound command always exits 0", () => {
+  const red = classify(
+    { hook_event_name: "PostToolUse", tool_input: { command: "npm test" } },
+    "64 aprovados, 3 falharam\nVERSUS_TEST_EXIT=1"
+  );
+  assert.strictEqual(red.outcome, "fail", "PostToolUse means the ECHO exited 0, not the suite");
+  assert.strictEqual(red.exitSource, "echo");
+
+  // With no echo, the event name is still the best signal available.
+  const green = classify({ hook_event_name: "PostToolUse", tool_input: { command: "npm test" } }, "Ran 12 specs");
+  assert.strictEqual(green.outcome, "pass");
+  assert.strictEqual(green.exitSource, "harness");
+});
+
+test("a killed run leaves no echo behind, so it stays unknown — not fail", () => {
+  const r = classify(
+    { hook_event_name: "PostToolUseFailure", tool_input: { command: "npm test" } },
+    "Command killed by timeout after 120000ms"
+  );
+  assert.strictEqual(r.outcome, "unknown");
+  assert.strictEqual(r.exitSource, undefined, "nothing was observed, so nothing is claimed");
 });
 
 console.log("\n=== All tests completed ===\n");

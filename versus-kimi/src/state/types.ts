@@ -31,6 +31,7 @@ export interface PhaseState {
     outputSha256?: string;
     outputBytes?: number;
     exitCode?: number;
+    exitSource?: "harness" | "echo";
   };
   /** Lens activation for Phase 2, recorded STRUCTURALLY by record_activated_lenses —
    *  ONE entry per critique iteration (the 2↔3 loop re-declares against each new
@@ -59,6 +60,12 @@ export interface TestProvenance {
   outputSha256?: string;
   outputBytes?: number;
   exitCode?: number;
+  /** Where the exit code came from: the sanctioned `VERSUS_TEST_EXIT=$?` echo, or the
+   *  harness itself. Under Kimi the harness signal is the PostToolUse/PostToolUseFailure
+   *  event name — which reports the COMPOUND command's status, so it is only trusted
+   *  when no echo is present. Absent when the outcome was classified by output markers
+   *  or was unknown — i.e. the exit status was not actually observed. */
+  exitSource?: "harness" | "echo";
 }
 
 /** Which lenses one critique iteration activated, and why the others were not.

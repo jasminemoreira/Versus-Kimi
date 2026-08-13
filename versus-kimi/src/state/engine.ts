@@ -473,13 +473,17 @@ export class StateEngine {
       if (def.verify === "test-pass") {
         const t = this.state.lastTestOutcome;
         if (!t) continue;
-        const nominal = t.source === "harness" && t.exitCode === 0;
+        // Nominal = the exit status was actually OBSERVED (via the VERSUS_TEST_EXIT echo
+        // or the harness) and was 0 — not inferred from output markers. The markers are
+        // English-only, so on a project whose runner reports in any other language they
+        // are noise; the echo is what makes nominal reachable at all there.
+        const nominal = typeof t.exitCode === "number" && t.exitCode === 0;
         ec.verifiedBy = {
           path: "test-pass",
           nominal,
           at: new Date().toISOString(),
-          note: nominal ? undefined : "pass NOT confirmed by a harness exit_code=0 — classified via output markers or a non-harness source",
-          snapshot: { outcome: t.outcome, command: t.command, exitCode: t.exitCode, source: t.source, outputSha256: t.outputSha256, at: t.at },
+          note: nominal ? undefined : "pass NOT confirmed by an observed exit status (no harness exit_code and no VERSUS_TEST_EXIT echo) — classified via output markers",
+          snapshot: { outcome: t.outcome, command: t.command, exitCode: t.exitCode, exitSource: t.exitSource, source: t.source, outputSha256: t.outputSha256, at: t.at },
         };
       } else if (def.verify === "lenses-recorded") {
         const cur = (this.state.activatedLenses ?? []).find((a) => a.iteration === this.critiqueIteration());
@@ -719,13 +723,15 @@ export class StateEngine {
             `${t.command ? ` for \`${t.command}\`` : ""} at ${t.at}` +
             `${t.phase !== phase ? ` (in Phase ${t.phase}, not this phase)` : ""}` +
             `${typeof t.exitCode === "number" ? `, exit_code=${t.exitCode}` : ""}.` +
-            (t.outcome === "unknown" ? ` "unknown" means the hook could not classify the output — check the run's output, or re-run.` : "")
+            (t.outcome === "unknown" ? ` "unknown" means the hook could not read an exit status — the run was killed or backgrounded, or it printed none.` : "")
           : `The engine has recorded NO test run in this phase.`;
         out.push(
           `[Phase ${phase}] ${def.criterion}: no witnessed passing test run in this phase. ${seen} ` +
-          `A green run must be seen by the test-outcome hook (S4: never assume tests passed — execute and verify). ` +
-          `If the suite is green but this stays red, the run was not classified as a pass — inspect get_phase_state.lastTestOutcome. ` +
-          `Marking the criterion met is not enough.`
+          `Run the suite so the engine reads the EXIT STATUS, not the runner's prose — append the exit echo: ` +
+          `\`<your test command>; echo "VERSUS_TEST_EXIT=$?"\` (e.g. \`npm test; echo "VERSUS_TEST_EXIT=$?"\`), ` +
+          `in the FOREGROUND with an explicit \`timeout\` — a run Kimi moves to the background is never witnessed. ` +
+          `The engine keys on that number, so it works in any language or output format. Do NOT modify the test runner. ` +
+          `(S4: never assume tests passed — execute and verify. Marking the criterion met is not enough.)`
         );
       }
       if (def.verify === "lenses-recorded" && !this.lensesRecorded()) {

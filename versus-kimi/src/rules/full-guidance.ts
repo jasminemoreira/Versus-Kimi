@@ -804,7 +804,13 @@ This ensures the NEXT session knows exactly what changed since the last test rou
 ### Next Step (MANDATORY when all testing is complete):
 Both automated and manual testing must be done before advancing. When both gates are ✅: call advance_phase() to move to Phase 7. Then call get_phase_guidance() and begin Phase 7 post-review immediately.
 
-**tests_passing is engine-witnessed, not asserted (S4).** advance_phase() to Phase 7 is BLOCKED unless the test-outcome hook actually saw a GREEN run during Phase 6 — marking tests_passing met is not enough. Run the full suite here (a recognized command: npm test, jest, pytest, cargo test, go test, …) and let it pass, in the FOREGROUND with an explicit \`timeout\` — a run that Kimi moves to the background is never witnessed, so the gate stays shut. If you switched sessions/models at Step 0, run the suite again in this session so the engine witnesses it. The engine checks that the run was green, not that the tests are adequate — coverage and meaningfulness are your and the user's judgment.
+**tests_passing is engine-witnessed, not asserted (S4).** advance_phase() to Phase 7 is BLOCKED unless the test-outcome hook actually saw a GREEN run during Phase 6 — marking tests_passing met is not enough.
+
+**Run the suite with the exit echo so the engine reads the EXIT STATUS, not your runner's prose:**
+\`\`\`
+<your test command>; echo "VERSUS_TEST_EXIT=$?"
+\`\`\`
+e.g. \`npm test; echo "VERSUS_TEST_EXIT=$?"\` (or \`pytest; echo "VERSUS_TEST_EXIT=$?"\`, etc.). The engine keys on that number — the shell's own \`$?\` — so it works whatever language or format your runner prints in, and you never need to touch the runner to be understood. **Do NOT modify the test runner to satisfy the hook**; append the echo to the command instead. (A recognized runner in English still classifies without the echo, but the echo is the reliable, locale-proof path.) Run it in the FOREGROUND with an explicit \`timeout\` — a run that Kimi moves to the background is never witnessed, so the gate stays shut and no echo is ever printed. If you switched sessions/models at Step 0, run the suite again in this session so the engine witnesses it. The engine checks that the run was green, not that the tests are adequate — coverage and meaningfulness are your and the user's judgment.
 
 ### Re-verify what earlier phases DECIDED (the method does not otherwise re-check it):
 The 2↔3 loop establishes critical findings and their resolution; Phase 1 establishes premises. Nothing re-checked either survived the code — in the batch a resolved critical was reintroduced (an O(n²) said to be erased came back in a filter) and a Phase-1 premise (single-thread; streaming migration) was violated by the implementation, both found only by luck. Two artifacts close that:

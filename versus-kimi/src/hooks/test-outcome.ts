@@ -91,38 +91,66 @@ const INCONCLUSIVE = [
 ];
 
 /**
- * Classifies from the HARNESS signal rather than the reporter's prose.
+ * The exit status the command itself echoed: `<test command>; echo "VERSUS_TEST_EXIT=$?"`.
  *
- * Kimi carries no `exit_code` in the hook payload, but it does carry the
- * equivalent: the Bash tool answers `ok` when the command exited 0 and `error`
- * otherwise, and the runtime turns that into the event name — `PostToolUse` for
- * a clean exit, `PostToolUseFailure` for anything else, with the code itself in
- * the message ("Command failed with exit code: 1"). That is authoritative where
- * the prose is not: a suite whose reporter phrases its summary unusually is
- * still classified correctly.
+ * This is the only language-agnostic signal available. `$?` is expanded by the
+ * shell, not written by the agent or the reporter, so it says the same thing
+ * whether the suite prints "2 failed", "2 falharam" or nothing at all. The
+ * marker regexes below are English-only and are now a last resort.
+ *
+ * The LAST occurrence wins: a session that runs the suite twice in one command
+ * ends with the status of the final run.
+ */
+export function detectExitCode(output: string): number | undefined {
+  const ms = [...output.matchAll(/VERSUS_TEST_EXIT=(\d+)/g)];
+  return ms.length ? parseInt(ms[ms.length - 1][1], 10) : undefined;
+}
+
+/**
+ * Classifies by observed exit status, falling back to the reporter's prose.
+ *
+ * **Precedence is echo BEFORE harness here, which inverts the other builds — and
+ * it has to be.** Kimi does supply a harness-level signal (the Bash tool answers
+ * `ok` on exit 0 and `error` otherwise, which the runtime turns into the event
+ * name `PostToolUse` / `PostToolUseFailure`), but that signal reports the status
+ * of the COMPOUND command. Once the sanctioned echo is appended, `npm test; echo
+ * "VERSUS_TEST_EXIT=$?"` exits 0 no matter how red the suite is — the shell
+ * returns the status of the last command, which is the echo. Trusting the event
+ * name first would classify every failing suite as a pass, precisely in the setup
+ * the guidance now asks for. The echo carries the test command's own status, so
+ * it wins; the event name is consulted only when no echo is present.
  *
  * A run Kimi killed (timeout, abort, interrupt) or moved to the background never
  * reported its own status, so it is `unknown` — not `fail`. Blaming the suite for
  * a run nobody observed is exactly the confusion the gate message must avoid.
- *
- * Returns the outcome plus the exit code when it could be read.
+ * The echo cannot contradict this: `cmd; echo` only prints once cmd has finished,
+ * so a killed run leaves no token behind.
  */
-export function classify(input: HookInput, output: string): { outcome: Outcome; exitCode?: number; fromHarness: boolean } {
+export function classify(
+  input: HookInput,
+  output: string
+): { outcome: Outcome; exitCode?: number; exitSource?: "harness" | "echo" } {
+  const echoExit = detectExitCode(output);
+  if (typeof echoExit === "number") {
+    return { outcome: echoExit === 0 ? "pass" : "fail", exitCode: echoExit, exitSource: "echo" };
+  }
+
   const failed = input.hook_event_name === "PostToolUseFailure";
 
   if (!failed && input.hook_event_name === "PostToolUse") {
-    return { outcome: "pass", exitCode: 0, fromHarness: true };
+    return { outcome: "pass", exitCode: 0, exitSource: "harness" };
   }
 
   if (failed) {
     const code = output.match(/exit code:?\s*(\d+)/i);
-    if (code) return { outcome: "fail", exitCode: parseInt(code[1], 10), fromHarness: true };
-    if (INCONCLUSIVE.some((p) => p.test(output))) return { outcome: "unknown", fromHarness: true };
-    return { outcome: "fail", fromHarness: true };
+    if (code) return { outcome: "fail", exitCode: parseInt(code[1], 10), exitSource: "harness" };
+    if (INCONCLUSIVE.some((p) => p.test(output))) return { outcome: "unknown" };
+    return { outcome: "fail", exitSource: "harness" };
   }
 
-  // No recognizable harness signal — fall back to reading the reporter.
-  return { outcome: detectOutcome(output), fromHarness: false };
+  // No exit status observed at all — read the reporter, and accept that this path
+  // is English-only. Do NOT extend the markers per language: that is bailing water.
+  return { outcome: detectOutcome(output) };
 }
 
 async function main() {
@@ -139,17 +167,18 @@ async function main() {
 
   try {
     const output = toolOutput(input);
-    const { outcome, exitCode, fromHarness } = classify(input, output);
+    const { outcome, exitCode, exitSource } = classify(input, output);
 
     // Provenance does not prevent forgery — it makes a workaround legible in a
     // post-mortem, which is what a bypassed gate leaves no trace of otherwise.
     const provenance: TestProvenance = {
-      source: fromHarness ? "harness" : "unknown",
+      source: exitSource ? "harness" : "unknown",
       toolUseId: input.tool_call_id,
       sessionId: input.session_id,
       outputBytes: Buffer.byteLength(output, "utf-8"),
       outputSha256: createHash("sha256").update(output).digest("hex"),
       exitCode,
+      exitSource,
     };
 
     const { count } = engine.recordTestOutcome(command, outcome, provenance);
@@ -174,9 +203,11 @@ async function main() {
     } else if (outcome === "unknown") {
       queueNotice(
         workspacePath,
-        "[Versus] The last test run ended without a readable result (killed, backgrounded or " +
-        "aborted), so it was recorded as unknown: it neither satisfies tests_passing nor counts " +
-        "toward S6. Run the suite again in the foreground with an explicit timeout."
+        "[Versus] The last test run ended without a readable exit status, so it was recorded as " +
+        "unknown: it neither satisfies tests_passing nor counts toward S6. Re-run it in the " +
+        'FOREGROUND with an explicit timeout AND with the exit echo appended — `<your test ' +
+        'command>; echo "VERSUS_TEST_EXIT=$?"` — so the engine reads the number the shell ' +
+        "produced instead of guessing from the runner's prose. Do not modify the test runner."
       );
     }
   } catch {

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.1] - 2026-08-13
+
+### Fixed
+- **A test run is classified by its exit status, not by the language its runner prints in.** The marker regexes are English-only, so a suite reporting "67 aprovados, 3 falharam" was unclassifiable — and 0.10.0 leaned on them wherever no harness signal was available. The sanctioned invocation is now `<your test command>; echo "VERSUS_TEST_EXIT=$?"`: `$?` is expanded by the shell, not written by the agent or the reporter, so it reads the same in any language or output format. The markers remain only as a last resort and are deliberately **not** being extended per language — that is bailing water.
+
+  The guidance also states, and the refusal message repeats: **do not modify the test runner to satisfy the hook.** Append the echo to the command instead. A real run in another build shows exactly this failure mode — the agent rewriting its runner to print English markers.
+
+- **The echo outranks Kimi's event-name signal, inverting the order the other builds use — and it has to.** Kimi's harness signal is live here (`PostToolUse` vs `PostToolUseFailure`), but it reports the status of the *compound* command. Once the echo is appended, `npm test; echo "VERSUS_TEST_EXIT=$?"` exits 0 however red the suite is, because the shell returns the status of the last command. Trusting the event name first would have read every failing suite as a pass, precisely in the invocation the new guidance prescribes. The echo carries the test command's own status, so it wins; the event name is consulted only when no echo is present. A test locks this order.
+
+### Changed
+- **`nominal` now means the exit status was actually observed** (echo or harness) **and was 0** — not inferred from output markers. Provenance records `exitSource: "harness" | "echo"`, so a post-mortem can tell which path verified the gate.
+
+- A run killed, backgrounded or aborted still records `unknown`, and the notice now teaches the echo form. The echo cannot contradict it: `cmd; echo` only prints once `cmd` has finished, so a killed run leaves no token behind.
+
 ## [0.10.0] - 2026-08-12
 
 Post-batch lot (v0.15 → v0.16.2 of the reference build), adapted to Kimi.
