@@ -922,6 +922,42 @@ test("a finding citing a module absent from the architecture BLOCKS (module drif
   if (r.ok) return;
   assert.ok(r.error.missingCriteria.some((m) => m.includes("health-prober") && m.includes("absent from every version")));
 });
+
+test("a dependency cell holding a module id does not hide the next module", () => {
+  // The regression the whole-file regex caused: `| M-01 |\n|` matched across the
+  // newline and ate the pipe that OPENS the row below, so that row vanished from
+  // the extracted set and the gate refused a module that was plainly in the table.
+  // The shape is what matters: depends-on carrying an id, and the finding pointing
+  // at the module of the row BELOW it. A table with no declared dependencies never
+  // exercises this — which is why the suite missed it.
+  toPhase2Stamped();
+  fs.writeFileSync(
+    path.join(workspace, "specs", "technical", "architecture.md"),
+    "# Architecture\n\n| id | module | responsibility | interface | depends-on |\n|---|---|---|---|---|\n" +
+    "| M-01 | board | hold the pegs | at(x,y) | — |\n" +
+    "| M-02 | ui | draw the board | render() | M-01 |\n" +
+    "| M-03 | game | rules and moves | move(a,b) | M-01, M-02 |\n\n" +
+    "## Assumptions\n- single-threaded runtime\n"
+  );
+  writeMatrix(
+    "# Findings\n\n| id | module | lens | severity | description |\n|---|---|---|---|---|\n" +
+    "| P-01 | game | Security | 🔴 | a finding on the module the parser used to swallow |\n"
+  );
+  const r = engine.advancePhase(3);
+  assert.strictEqual(r.ok, true, "game is in the table; only a parser walking across newlines could miss it");
+});
+
+test("countArtifactRows counts LINES, not matches — a self-referencing row counts once", () => {
+  // Same class at the second site: the count is documented as lines matching the
+  // pattern, and a row whose depends-on repeats an id used to score twice.
+  engine.initProject("Test", "Desc");
+  fs.writeFileSync(
+    path.join(workspace, "specs", "technical", "architecture.md"),
+    "# Architecture\n\n| id | module | responsibility | interface | depends-on |\n|---|---|---|---|---|\n" +
+    "| M-02 | ui | draw | render() | M-01 |\n"
+  );
+  assert.strictEqual(engine.countArtifactRows("technical/architecture.md", "\\|\\s*M-\\d+\\s*\\|"), 1);
+});
 test("a module removed in a later version is tolerated (union of versions)", () => {
   // architecture with two versions: quota-limiter existed in V(1), gone in V(2).
   toPhase2Stamped();

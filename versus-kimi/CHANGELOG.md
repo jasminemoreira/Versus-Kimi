@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.2] - 2026-08-13
+
+### Fixed
+- **The cross-module gate lost the row after any row that declared a dependency.** `tableColumn2` ran one global regex over the whole file, and nothing in `\|\s*(?:M-\d+)\s*\|\s*([^|]+?)\s*\|` stops it crossing a newline: on a row whose `depends-on` cell is itself an id, it matched `| M-01 |\n|` and consumed the pipe that OPENS the next row — so that row was never recognized. The module vanished from the extracted set and `advance_phase(2→3)` refused it as drift, naming a module plainly present in the table.
+
+  The symptom was selective, which is what made it undiagnosable from outside: the first row is safe, a row after `—` is safe, and only the row following a declared dependency disappears. No edit to `architecture.md` could fix it, because the file was never the problem.
+
+  Fixed by matching per line, anchored (`^`, no `g` flag). A markdown table row does not span a newline, so nothing legitimate is lost and no match can walk over the row below.
+
+- **`countArtifactRows` had the same exposure** and is now counted per line, as its name and docstring already said. A row whose `depends-on` repeats an id used to score twice.
+
+### Notes
+- Swept all 105 `architecture.md` / `coverage-matrix.md` on this machine with both readings. Three diverged: RestaUm (lost `game` — the reported case) and two copies of T27-despesas, where the old regex spliced a whole paragraph of prose into the module set. **No coverage matrix diverged**, so the silent direction of this bug — a finding's module dropped from the matrix set, letting real drift through — did not occur in the corpus.
+
 ## [0.10.1] - 2026-08-13
 
 ### Fixed
