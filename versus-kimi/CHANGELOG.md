@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.3] - 2026-08-13
+
+### Fixed
+- **The safeguard panel showed a frozen portrait: S6 could be blocking test runs with every light green.** `state.safeguards[].status` starts `"ok"` and is only rewritten when the agent calls `check_all_safeguards` — which the guidance fires once, in Phase 4. `advance_phase` validates safeguards to decide a block but never persists the outcome, and neither does `recordTestOutcome` nor the loop detector. So the sidebar and `get_phase_state` were reading a field almost nothing writes.
+
+  Both now derive the status on READ, via `validateSafeguard`. Enforcement was always real — this only makes the display agree with it. Display only: no gate, no engine, no hook changed.
+
+### Notes
+- By design only S0 and S6 can reach `violated`; S1/S5/S7 are warnings and S2/S3/S4 are behavioral (always `ok`). A mostly-green panel is legitimate — the fix is that the two which can go red now do so when they are red. In Phase 5, S7 always reads as a warning; that is the reminder it was written to be, not a new alarm.
+
 ## [0.10.2] - 2026-08-13
 
 ### Fixed

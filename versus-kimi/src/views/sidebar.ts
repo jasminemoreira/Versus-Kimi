@@ -5,6 +5,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { PhaseState } from "../state/types";
 import { getPhaseDefinition, getExitCriteriaForPhase } from "../rules/phases";
+import { validateSafeguard } from "../rules/safeguards";
 
 export class SidebarProvider implements vscode.TreeDataProvider<StateItem> {
   private _onDidChangeTreeData = new vscode.EventEmitter<StateItem | undefined | null>();
@@ -164,15 +165,22 @@ export class SidebarProvider implements vscode.TreeDataProvider<StateItem> {
     );
     items.push(decisionsItem);
 
-    // Safeguards
-    const violated = this.state.safeguards.filter((s) => s.status === "violated");
-    const warnings = this.state.safeguards.filter((s) => s.status === "warning");
+    // Safeguards — derived on READ, never the cached status field.
+    // state.safeguards[].status starts "ok" and is only rewritten when the agent
+    // calls check_all_safeguards (the guidance fires it once, in Phase 4).
+    // advance_phase validates safeguards to decide a block but does not persist
+    // the outcome, and neither does recordTestOutcome; so the cached field is a
+    // frozen portrait — S6 could be blocking runs with the panel showing green.
+    // Enforcement was always real; only the display lied.
+    const sgLive = this.state.safeguards.map((s) => validateSafeguard(s.id, this.state!));
+    const violated = sgLive.filter((s) => s.status === "violated");
+    const warnings = sgLive.filter((s) => s.status === "warning");
     const sgIcon = violated.length > 0 ? "error" : warnings.length > 0 ? "warning" : "pass";
     const sgItem = new StateItem(
       `Safeguards`,
       `${violated.length} violated, ${warnings.length} warnings`,
       sgIcon,
-      this.state.safeguards.map(
+      sgLive.map(
         (s) => new StateItem(
           `${s.id}: ${s.status}`,
           s.details || "",

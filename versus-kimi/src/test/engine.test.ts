@@ -9,6 +9,7 @@ import { ScoreBreakdown } from "../state/types";
 import { getCompleteGuidance } from "../rules/full-guidance";
 import { validateSafeguard } from "../rules/safeguards";
 import { detectOutcome, detectExitCode, classify } from "../hooks/test-outcome";
+import { handleGetPhaseState } from "../mcp/tools/state-tools";
 import { isAllowedPath } from "../hooks/phase-gate";
 import { ensureGlobalPermissions, permissionSnippet, pinCommonJs } from "../setup";
 import { specEntryValue, SpecEntry } from "../state/types";
@@ -1693,6 +1694,19 @@ test("a killed run leaves no echo behind, so it stays unknown — not fail", () 
   );
   assert.strictEqual(r.outcome, "unknown");
   assert.strictEqual(r.exitSource, undefined, "nothing was observed, so nothing is claimed");
+});
+
+test("get_phase_state reports safeguards LIVE, not the cached (stale) status", () => {
+  toPhase5();
+  for (let i = 0; i < LOOP_FAILURE_THRESHOLD; i++) engine.recordTestOutcome("npm test", "fail");
+  assert.strictEqual(engine.isLoopBlocked(), true, "S6 is actually blocking runs");
+
+  const cached = engine.getPhaseState()!.safeguards.find((s) => s.id === "S6")!;
+  assert.strictEqual(cached.status, "ok", "the cached field is stale — nothing writes it but check_all_safeguards");
+
+  const out = JSON.parse(handleGetPhaseState(engine));
+  const s6 = out.safeguards.find((s: { id: string }) => s.id === "S6");
+  assert.strictEqual(s6.status, "violated", "what the agent reads must match what the engine enforces");
 });
 
 console.log("\n=== All tests completed ===\n");
