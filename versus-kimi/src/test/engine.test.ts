@@ -9,7 +9,8 @@ import { ScoreBreakdown } from "../state/types";
 import { getCompleteGuidance } from "../rules/full-guidance";
 import { validateSafeguard } from "../rules/safeguards";
 import { detectOutcome, detectExitCode, classify } from "../hooks/test-outcome";
-import { handleGetPhaseState } from "../mcp/tools/state-tools";
+import { handleGetPhaseState, handleGetDecisions } from "../mcp/tools/state-tools";
+import { handleGetPhaseGuidance } from "../mcp/tools/guidance-tools";
 import { isAllowedPath } from "../hooks/phase-gate";
 import { ensureGlobalPermissions, permissionSnippet, pinCommonJs } from "../setup";
 import { specEntryValue, SpecEntry } from "../state/types";
@@ -1707,6 +1708,75 @@ test("get_phase_state reports safeguards LIVE, not the cached (stale) status", (
   const out = JSON.parse(handleGetPhaseState(engine));
   const s6 = out.safeguards.find((s: { id: string }) => s.id === "S6");
   assert.strictEqual(s6.status, "violated", "what the agent reads must match what the engine enforces");
+});
+
+console.log("\n=== Transport Budget Tests (host pages a result over 5,691 chars to disk) ===\n");
+
+const HOST_PAGING_LIMIT = 5691;
+
+/** A project the size of a real one: measured 761 KB / 452 decisions on this machine. */
+function fatProject() {
+  engine.initProject("Test", "Desc");
+  for (let i = 0; i < 200; i++) {
+    engine.updateProjectSpec({
+      stack: [`lib-${i} pinned at 4.2.${i} because the transitive dep of the previous one broke SSR`],
+      constraints: [`constraint ${i}: the ingest path must stay under 40 ms at p99 for payloads below 2 MB`],
+      patterns: [`pattern ${i}: every handler returns Result<T> and never throws across a module boundary`],
+      outOfScope: [`out of scope ${i}: multi-tenant billing, which the operator explicitly deferred to v2`],
+    });
+  }
+  for (let i = 0; i < 500; i++) {
+    engine.recordDecision(1, "technical", `decision ${i}: ` + "the rationale runs on at length, ".repeat(20));
+  }
+}
+
+test("get_phase_state stays inline on a project the size of a real one", () => {
+  fatProject();
+  const out = handleGetPhaseState(engine);
+  assert.ok(out.length <= HOST_PAGING_LIMIT, `gateway guard must not page to disk — got ${out.length}`);
+  const o = JSON.parse(out);
+  assert.ok(o._specNote && o._specNote.includes("omitted"), "the omission is stated, not silent");
+  assert.ok(o._decisionsNote && o._decisionsNote.includes("get_decisions"), "and it says where the rest is");
+  assert.ok(o.projectSpec.constraints.length > 0, "every list keeps entries — one list must not evict another");
+  assert.ok(o.projectSpec.stack.length > 0);
+  assert.strictEqual(typeof o.projectSpec.stack[0], "string", "the {value, phase, at} stamp is analysis metadata");
+});
+
+test("an action the model must take is never dropped to make room", () => {
+  fatProject();
+  // Drive it to a "ready to advance" state: the hint is ~350 chars of pressure.
+  engine.updateScore(95, makeFullBreakdown(95));
+  for (const c of engine.getExitCriteriaWithDefs(0)) engine.markExitCriterion(0, c.criterion, true);
+  const out = handleGetPhaseState(engine);
+  const o = JSON.parse(out);
+  assert.ok(o._nextAction && o._nextAction.includes("advance_phase"), "context yields before an instruction does");
+  assert.ok(out.length <= HOST_PAGING_LIMIT, `still inline with the hint — got ${out.length}`);
+});
+
+test("get_decisions stays inline — the tool get_phase_state points AT must not spill", () => {
+  fatProject();
+  const out = handleGetDecisions(engine, {});
+  assert.ok(out.length <= HOST_PAGING_LIMIT, `got ${out.length}`);
+  const o = JSON.parse(out);
+  assert.strictEqual(o.count, 500, "the true total is still reported");
+  assert.ok(o.shown < o.count && o._note.includes("narrow by phase"));
+});
+
+test("one decision larger than the whole budget is truncated, not spilled", () => {
+  engine.initProject("Test", "Desc");
+  engine.recordDecision(1, "technical", "x".repeat(50000));
+  const out = handleGetDecisions(engine, {});
+  assert.ok(out.length <= HOST_PAGING_LIMIT, `a single monster decision must not page to disk — got ${out.length}`);
+  assert.ok(JSON.parse(out).decisions[0].content.includes("truncated"), "and it says it was cut");
+});
+
+test("get_phase_guidance points at the injected context instead of repeating it", () => {
+  engine.initProject("Test", "Desc");
+  const out = handleGetPhaseGuidance(engine, { phase: 2 });
+  assert.ok(out.length < 1000, `a pointer, not 17 KB of prose — got ${out.length}`);
+  const o = JSON.parse(out);
+  assert.ok(o.guidancePointer.includes("Phase 2 — Adversarial Critique"), "it names the section to read");
+  assert.strictEqual(o.guidance, undefined, "the body is gone — inject-context already delivers it");
 });
 
 console.log("\n=== All tests completed ===\n");

@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.11.0] - 2026-09-03
+
+### Fixed
+- **The read tools no longer page to disk.** A tool result over ~5,691 chars is written to a file by the host instead of being returned inline. `get_phase_state` is the gateway guard — the model is instructed to call it before anything else — so when it spilled, the model proceeded without ever having seen the state.
+
+  Measured against real `state.json` files on this machine before changing anything, because which field dominates varies by project:
+
+  | handler | antes (pior caso) | agora |
+  |---|---|---|
+  | `get_decisions` | 601 KB — 106× | 5.1 KB |
+  | `get_phase_state` | 50.9 KB — 8.9× | 5.1 KB |
+  | `get_phase_guidance` | 17.3 KB — 3.0× | 0.3 KB |
+
+  `get_exit_criteria`, `check_all_safeguards` and `check_specs_status` were already inline and are unchanged.
+
+- **`get_phase_state` budgets its three heavy fields.** `projectSpec` keeps the newest entries per list, counted independently so a 200-entry stack cannot evict the constraints, and entries are normalized to plain strings (the `{value, phase, at}` stamp is analysis metadata the model never reads). Entries are never truncated — each is a distinct commitment, and half a constraint is worse than a counted omission. `recentDecisions` shortens long content before dropping a decision whole. `lastTestOutcome.command` is capped, which is what a 2 KB heredoc costs. Both omissions are stated in `_specNote` / `_decisionsNote`, pointing at `get_decisions(phase?)`.
+
+- **A final ceiling backs the per-field budgets.** Those bound counts, not characters: a project with six very long constraints still measured 5,623 chars — 68 below the limit, which is luck rather than a fix, and a "ready to advance" hint alone adds ~350. The result is now trimmed oldest-first until it fits, decisions before spec entries, and **the hints are never dropped** — an instruction the model must act on outranks the context it acts with. Swept 85 projects: worst case 5,113, zero spills.
+
+- **`get_decisions` is budgeted too**, since `get_phase_state` points at it — pointing at a bigger leak fixes nothing. A single decision larger than the whole budget is truncated rather than spilled.
+
+### Changed
+- **`get_phase_guidance` returns a pointer, not the text.** The complete methodology is injected before every message by `inject-context`, so repeating the phase section inline was pure redundancy that happened to be 3× the paging limit. It now names the section to read (`guidancePointer`); the `guidance` field is gone, and the tool description says so. Side effect: the MCP server bundle no longer pulls in `full-guidance.ts` and dropped 65 KB.
+
+### Notes
+- Evidence this was happening in practice: of 60 paged session-resource files sampled on this machine, 57 were `get_phase_guidance` results and 3 were `get_phase_state`.
+- Display and transport only. No gate, no measurement and no engine logic changed, so nothing already run is invalidated.
+
 ## [0.10.3] - 2026-08-13
 
 ### Fixed
