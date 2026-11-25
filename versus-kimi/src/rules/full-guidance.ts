@@ -299,7 +299,7 @@ If any line lacks a clear production plan, this is a **CAPACITY BLOCKER**. Possi
 
 ≥90 → Phase 1 | 70-89 → +1 iteration | <70 → multiple iterations
 **If score < 90:** call start_iteration() to open the next iteration, then continue HSA focusing on the criteria with lowest scores. Do NOT offer to advance to Phase 1 — iterate until score ≥ 90.
-**If score ≥ 90:** call advance_phase() to advance to Phase 1. Inform the user.
+**If score ≥ 90:** call advance_phase(target_phase=1) to advance to Phase 1. Inform the user.
 **CAUTION AP8 (Perfectionism):** Score ≥90 is sufficient. Don't aim for 100.
 
 ### Implementation Feasibility — evaluate per component:
@@ -390,7 +390,7 @@ Below the table, add the assumptions list — and **number each premise (\`A-1\`
 
 \`advance_phase()\` to Phase 2 is BLOCKED until \`specs/technical/architecture.md\` exists AND contains module rows with ids (M-\\d+) — a prose doc no longer passes. As with the coverage matrix, the engine checks the FORM (there is a module table), not whether the architecture is good, nor — yet — that Phase 2 actually reused these names (that cross-check is not mechanized; see below). That stays your and the user's judgment.
 
-Then call advance_phase() to move to Phase 2. Then call get_phase_guidance() and begin Phase 2 immediately: record activated lenses and start the adversarial critique.`;
+Then call advance_phase(target_phase=2) to move to Phase 2. Then call get_phase_guidance() and begin Phase 2 immediately: record activated lenses and start the adversarial critique.`;
 
 // [G2] Critique-response asymmetry + [G3] Concentration analysis + [G8] AV types + [G10] Gate criteria
 const PHASE_2_GUIDANCE = `## Phase 2 — Adversarial Critique
@@ -457,7 +457,7 @@ The \`severity\` column is checked the same way — exactly one of 🔴/🟡/�
 
 ### Next Step (MANDATORY after displaying gate summary):
 Phase 3 always follows Phase 2. After displaying the gate:
-- If any findings (🔴/🟡/🟢) — the normal case: call advance_phase() → Phase 3. Inform: "Advancing to Phase 3 to address [N 🔴 criticals, N 🟡 important]."
+- If any findings (🔴/🟡/🟢) — the normal case: call advance_phase(target_phase=3) → Phase 3. Inform: "Advancing to Phase 3 to address [N 🔴 criticals, N 🟡 important]."
 - If you believe there are zero findings: revisit the critique first (rare after a genuine adversarial pass). The only valid transition from Phase 2 is to Phase 3 — there is no skip to Phase 4.
 Do NOT stop and wait. Do NOT block on 🔴 count — criticals are addressed IN Phase 3, not before entering it.
 
@@ -524,7 +524,7 @@ Present the recommendation and ask: accept recommendation / override (user choos
 The user validates the RECOMMENDATION, not the raw data.
 
 **Step 4 — Execute the agreed action (do NOT stop after confirmation):**
-- "→ Phase 4": call advance_phase(), then call get_phase_guidance() and begin Phase 4 convergence verification immediately.
+- "→ Phase 4": call advance_phase(target_phase=4), then call get_phase_guidance() and begin Phase 4 convergence verification immediately.
 - "1 more iteration" or "Multiple iterations": call start_iteration(), then return to Phase 2 critique with the updated architecture V(N+1). Announce: "Starting iteration N of the 2-3 loop. Returning to Phase 2 critique — apply all lenses to V(N+1)."
 
 **CAUTION AP8 (Perfectionism):** The stopping criterion is honesty — we know what works, what we assume, and what we don't know.
@@ -567,7 +567,7 @@ Inform the user: "The architecture is fully validated. From Phase 5 onward, you 
    - **"Switch model"** — close this chat, open a new one with the target model, type \`retomar Versus\`
 
    This is a DECISION, not a notice. Do NOT write "I am advancing to Phase 5; interrupt me if you want to switch" — announcing and proceeding puts the burden of interrupting on the user, at the one moment where the choice is cheapest to make. It is only free BEFORE any code exists: once Phase 5 has written files, switching means abandoning a session mid-implementation.
-3. Call advance_phase() to move to Phase 5 — in BOTH cases. Phase 4's gate is already satisfied; a new session should resume at Phase 5, not re-run the convergence check.
+3. Call advance_phase(target_phase=5) to move to Phase 5 — in BOTH cases. Phase 4's gate is already satisfied; a new session should resume at Phase 5, not re-run the convergence check.
 4. If the user chose "Switch model": call record_decision(phase=4, category='process', content='LLM SWITCH: user will resume Phase 5 in a new chat with <model>') and STOP your response. Do not start implementing.
 5. If the user chose "Continue here": call get_phase_guidance() and begin Phase 5 implementation immediately: read \`specs/technical/architecture.md\` (the Phase 1 artifact) for the first module — its interface, dependencies and assumptions — then consult the rest of specs/ and start coding. Work from the persisted doc, not chat recall.`;
 
@@ -679,7 +679,7 @@ If any ❌: implement the missing module/requirement before advancing.
 **CAUTION AP1:** do NOT mark ✅ without checking — the goal is to find ❌s, not to confirm ✅s.
 
 ### Next Step (MANDATORY — do NOT stop after scope inventory):
-When scope inventory is all ✅: call advance_phase() to move to Phase 6. Then call get_phase_guidance() and begin Phase 6 testing immediately.`;
+When scope inventory is all ✅: call advance_phase(target_phase=6) to move to Phase 6. Then call get_phase_guidance() and begin Phase 6 testing immediately.`;
 
 // [G8] AV types
 const PHASE_6_GUIDANCE = `## Phase 6 — Tests
@@ -802,7 +802,7 @@ After each fix, record a testing decision noting: what was fixed, what still nee
 This ensures the NEXT session knows exactly what changed since the last test round.
 
 ### Next Step (MANDATORY when all testing is complete):
-Both automated and manual testing must be done before advancing. When both gates are ✅: call advance_phase() to move to Phase 7. Then call get_phase_guidance() and begin Phase 7 post-review immediately.
+Both automated and manual testing must be done before advancing. When both gates are ✅: call advance_phase(target_phase=7) to move to Phase 7. Then call get_phase_guidance() and begin Phase 7 post-review immediately.
 
 **tests_passing is engine-witnessed, not asserted (S4).** advance_phase() to Phase 7 is BLOCKED unless the test-outcome hook actually saw a GREEN run during Phase 6 — marking tests_passing met is not enough.
 
@@ -810,7 +810,7 @@ Both automated and manual testing must be done before advancing. When both gates
 \`\`\`
 <your test command>; echo "VERSUS_TEST_EXIT=$?"
 \`\`\`
-e.g. \`npm test; echo "VERSUS_TEST_EXIT=$?"\` (or \`pytest; echo "VERSUS_TEST_EXIT=$?"\`, etc.). The engine keys on that number — the shell's own \`$?\` — so it works whatever language or format your runner prints in, and you never need to touch the runner to be understood. **Do NOT modify the test runner to satisfy the hook**; append the echo to the command instead. (A recognized runner in English still classifies without the echo, but the echo is the reliable, locale-proof path.) Run it in the FOREGROUND with an explicit \`timeout\` — a run that Kimi moves to the background is never witnessed, so the gate stays shut and no echo is ever printed. If you switched sessions/models at Step 0, run the suite again in this session so the engine witnesses it. The engine checks that the run was green, not that the tests are adequate — coverage and meaningfulness are your and the user's judgment.
+e.g. \`npm test; echo "VERSUS_TEST_EXIT=$?"\` (or \`pytest\`, \`cargo test\`, \`go test\`, \`xcodebuild … test\`, \`swift test\`, \`./gradlew test\`, \`mvn test\`, \`dotnet test\`, \`flutter test\`, \`make test\`, etc. — call the runner directly, no wrapper script needed). If your runner is not one of these, add a regex for it, one per line, to \`.versus/test-commands\` — do not wrap it in a package.json. Run the suite as its own command: text that merely MENTIONS a test command (a heredoc, an echo, a grep) is not a run and is ignored. The engine keys on that number — the shell's own \`$?\` — so it works whatever language or format your runner prints in, and you never need to touch the runner to be understood. **Do NOT modify the test runner to satisfy the hook**; append the echo to the command instead. (A recognized runner in English still classifies without the echo, but the echo is the reliable, locale-proof path.) Run it in the FOREGROUND with an explicit \`timeout\` — a run that Kimi moves to the background is never witnessed, so the gate stays shut and no echo is ever printed. If you switched sessions/models at Step 0, run the suite again in this session so the engine witnesses it. The engine checks that the run was green, not that the tests are adequate — coverage and meaningfulness are your and the user's judgment.
 
 ### Re-verify what earlier phases DECIDED (the method does not otherwise re-check it):
 The 2↔3 loop establishes critical findings and their resolution; Phase 1 establishes premises. Nothing re-checked either survived the code — in the batch a resolved critical was reintroduced (an O(n²) said to be erased came back in a filter) and a Phase-1 premise (single-thread; streaming migration) was violated by the implementation, both found only by luck. Two artifacts close that:

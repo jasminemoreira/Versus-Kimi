@@ -11,7 +11,10 @@ import { validateSafeguard } from "../rules/safeguards";
 import { detectOutcome, detectExitCode, classify } from "../hooks/test-outcome";
 import { handleGetPhaseState, handleGetDecisions } from "../mcp/tools/state-tools";
 import { handleGetPhaseGuidance } from "../mcp/tools/guidance-tools";
-import { isAllowedPath } from "../hooks/phase-gate";
+import { isAllowedPath, blockedTargets } from "../hooks/phase-gate";
+import { handleMarkExitCriterion } from "../mcp/tools/record-tools";
+import { handleAdvancePhase } from "../mcp/tools/transition-tools";
+import { isTestCommand, writeTargets, loadExtraTestPatterns, stripHeredocs } from "../hooks/shell-parse";
 import { ensureGlobalPermissions, permissionSnippet, pinCommonJs } from "../setup";
 import { specEntryValue, SpecEntry } from "../state/types";
 import { CONDITIONAL_LENSES, UNIVERSAL_LENS_DEFS, CONDITIONAL_LENS_DEFS } from "../rules/lenses";
@@ -1336,7 +1339,10 @@ test("phase gate: specs/ is writable in relative form (rule R4)", () => {
 test("phase gate: code is blocked in either form", () => {
   assert.strictEqual(isAllowedPath("src/app.ts", GATE_WS), false);
   assert.strictEqual(isAllowedPath("/home/dev/proj/src/app.ts", GATE_WS), false);
-  assert.strictEqual(isAllowedPath("gtd-metodologia.md", GATE_WS), false);
+  assert.strictEqual(isAllowedPath("gtd-metodologia.py", GATE_WS), false);
+  // 0.12.0: a root-level .md used to be refused as "ad-hoc"; documentation files are now
+  // writable anywhere (the ESJUD study had its research/ log blocked).
+  assert.strictEqual(isAllowedPath("gtd-metodologia.md", GATE_WS), true);
 });
 
 test("phase gate: scaffolding and docs stay writable", () => {
@@ -1351,10 +1357,12 @@ test("phase gate: methodology directories stay writable", () => {
   assert.strictEqual(isAllowedPath(".kimi-code/mcp.json", GATE_WS), true);
 });
 
-test("phase gate: paths escaping the workspace are not blessed", () => {
-  assert.strictEqual(isAllowedPath("../other/specs/x.md", GATE_WS), false);
-  assert.strictEqual(isAllowedPath("/etc/passwd", GATE_WS), false);
-  assert.strictEqual(isAllowedPath("", GATE_WS), false);
+test("phase gate: paths outside the workspace are not the project's code (0.12.0, aligned with Claude)", () => {
+  // Until 0.12.0 these were refused as "not ours to bless"; the ESJUD study had the
+  // session scratchpad blocked that way. Outside the project is not the gate's business.
+  assert.strictEqual(isAllowedPath("../other/src/x.ts", GATE_WS), true);
+  assert.strictEqual(isAllowedPath("/tmp/scratch/notes.ts", GATE_WS), true);
+  assert.strictEqual(isAllowedPath("", GATE_WS), false, "an empty path is still not blessed");
 });
 
 test("phase gate: .env is not blessed — Kimi refuses it as a sensitive file anyway", () => {
@@ -1363,7 +1371,7 @@ test("phase gate: .env is not blessed — Kimi refuses it as a sensitive file an
 });
 
 test("phase gate: a directory merely named like specs does not pass", () => {
-  assert.strictEqual(isAllowedPath("myspecs/x.md", GATE_WS), false);
+  assert.strictEqual(isAllowedPath("myspecs/x.ts", GATE_WS), false);
   assert.strictEqual(isAllowedPath("src/specs-helper.ts", GATE_WS), false);
 });
 
@@ -1780,3 +1788,123 @@ test("get_phase_guidance points at the injected context instead of repeating it"
 });
 
 console.log("\n=== All tests completed ===\n");
+
+// --- 0.12.0: fixes from the first external study (ESJUD, Versus Claude 0.16.4, macOS/Xcode) ---
+
+console.log("\n=== External-study fixes (ESJUD) ===\n");
+
+test("a heredoc that MENTIONS npm test is a write, not a test run", () => {
+  const cmd = 'cat >> research/GATES.md <<\'EOF\'\nRodado: npm test; echo "VERSUS_TEST_EXIT=$?" → VERSUS_TEST_EXIT=0\nEOF';
+  assert.strictEqual(isTestCommand(cmd), false, "the exact shape that overwrote a green lastTestOutcome in the study");
+  assert.ok(!stripHeredocs(cmd).includes("npm test"), "heredoc body is data");
+});
+
+test("text that merely mentions a runner is not a run (grep / echo / quoted)", () => {
+  assert.strictEqual(isTestCommand('grep -n "npm test" research/LOG.md'), false);
+  assert.strictEqual(isTestCommand('grep VERSUS_TEST_EXIT research/LOG.md'), false, "would have forged a pass from logged text");
+  assert.strictEqual(isTestCommand('echo "next: npm test; pytest" >> notes.md'), false);
+  assert.strictEqual(isTestCommand("git commit -m 'make npm test green'"), false);
+});
+
+test("real runs are recognized behind cd/env/time and inside bash -c", () => {
+  assert.ok(isTestCommand('npm test; echo "VERSUS_TEST_EXIT=$?"'));
+  assert.ok(isTestCommand('cd "aplicativo ios" && xcodebuild test -scheme ESJUD -destination "platform=iOS Simulator,name=iPhone 17"; echo "VERSUS_TEST_EXIT=$?"'));
+  assert.ok(isTestCommand("CI=1 time pytest -q"));
+  assert.ok(isTestCommand("bash -c 'cargo test --all'"));
+  assert.ok(isTestCommand("node ./out/test/engine.test.js"));
+});
+
+test("non-npm runners are recognized (the study had to wrap xcodebuild in package.json)", () => {
+  for (const c of [
+    "xcodebuild -scheme App test", "xcodebuild test-without-building -scheme App", "swift test",
+    "./gradlew testDebugUnitTest", "./gradlew connectedAndroidTest", "gradle check", "mvn -q test",
+    "./mvnw verify", "dotnet test", "flutter test", "dart test", "make test", "ctest --output-on-failure",
+    "bundle exec rspec", "vendor/bin/phpunit", "mix test", "go test ./...", "yarn test", "pnpm run test",
+    "bun test", "deno test", "npx vitest run", "python3 -m pytest", "uv run pytest", "tox",
+  ]) assert.ok(isTestCommand(c), `should recognize: ${c}`);
+  for (const c of ["xcodebuild build -scheme App", "swift build", "./gradlew assembleDebug", "make", "npm install", "go build ./..."]) {
+    assert.strictEqual(isTestCommand(c), false, `a build is not a test run: ${c}`);
+  }
+});
+
+test(".versus/test-commands adds project-specific runners", () => {
+  fs.mkdirSync(path.join(workspace, ".versus"), { recursive: true });
+  fs.writeFileSync(path.join(workspace, ".versus", "test-commands"), "# custom\n^./run-suite\\b\n(\n");
+  const extra = loadExtraTestPatterns(workspace);
+  assert.strictEqual(extra.length, 1, "comments and invalid regexes are skipped");
+  assert.ok(isTestCommand("./run-suite --all", extra));
+  assert.strictEqual(isTestCommand("./run-suite --all"), false);
+});
+
+test("phase-gate: paths are anchored at the project root; outside the project and docs are allowed", () => {
+  const ws = workspace;
+  assert.ok(isAllowedPath(path.join(ws, "specs/technical/architecture.md"), ws));
+  assert.ok(isAllowedPath("specs/domain/x.json", ws));
+  assert.strictEqual(isAllowedPath(path.join(ws, "src/specs/Impl.swift"), ws), false, "a nested specs/ dir is code");
+  assert.ok(isAllowedPath(path.join(os.tmpdir(), "scratch", "notes.ts"), ws), "the study's scratchpad (outside the workspace) was blocked");
+  assert.ok(isAllowedPath(path.join(ws, "research/RESEARCH_LOG.md"), ws), "documentation files are not code");
+  assert.ok(isAllowedPath(path.join(ws, "research/METRICS/findings.csv"), ws));
+  assert.ok(isAllowedPath(path.join(ws, "package.json"), ws));
+  assert.strictEqual(isAllowedPath(path.join(ws, ".env"), ws), false, "Kimi keeps .env out of the allowlist");
+  assert.strictEqual(isAllowedPath(path.join(ws, "src/App.swift"), ws), false);
+  assert.ok(isAllowedPath("x.md", ws, path.join(ws, "research")), "relative paths resolve against the session cwd");
+  assert.strictEqual(isAllowedPath("App.swift", ws, path.join(ws, "src")), false);
+});
+
+test("phase-gate: Bash writes to code are gated like Write/Edit", () => {
+  const ws = workspace;
+  const bash = (command: string) => blockedTargets({ tool_name: "Bash", tool_input: { command }, cwd: ws }, ws);
+  assert.deepStrictEqual(bash("cat > src/App.swift <<'EOF'\nimport SwiftUI\nEOF"), ["src/App.swift"]);
+  assert.deepStrictEqual(bash("echo x | tee -a src/a.ts"), ["src/a.ts"]);
+  assert.deepStrictEqual(bash("sed -i 's/a/b/' src/a.py"), ["src/a.py"]);
+  assert.deepStrictEqual(bash("cp /tmp/gen.kt app/src/Gen.kt"), ["app/src/Gen.kt"]);
+  assert.deepStrictEqual(bash("cat >> research/RESEARCH_LOG.md <<'EOF'\nP0001 > src/x.ts\nEOF"), [], "doc write allowed; heredoc text is not a redirect");
+  assert.deepStrictEqual(bash("npm test 2>&1 > /dev/null; ls > /tmp/out.txt"), []);
+  assert.deepStrictEqual(bash('echo "a > src/x.ts"'), [], "a quoted > is not a redirection");
+  assert.deepStrictEqual(bash("grep -rn foo src/"), [], "reads are never gated");
+  assert.deepStrictEqual(writeTargets("cmd > \"$OUT\""), [], "unresolvable targets are skipped, not guessed");
+  // Kimi's Write/Edit carry `path` (relative allowed); `file_path` is accepted too.
+  assert.deepStrictEqual(blockedTargets({ tool_name: "Write", tool_input: { path: "src/main.ts" } }, ws), ["src/main.ts"]);
+  assert.strictEqual(blockedTargets({ tool_name: "Edit", tool_input: { file_path: path.join(ws, "src/main.ts") } }, ws).length, 1);
+  assert.deepStrictEqual(blockedTargets({ tool_name: "Write", tool_input: { path: "specs/domain/x.md" } }, ws), []);
+});
+
+test("mark_exit_criterion refuses a criterion of another phase", () => {
+  engine.initProject("Test", "Desc");
+  const future = JSON.parse(handleMarkExitCriterion(engine, { phase: 1, criterion: "user_confirmed", met: true }));
+  assert.strictEqual(future.success, false, "pre-stamping a future phase is what made G2/G3 land in the same second");
+  assert.ok(String(future.error).includes("current phase is 0"));
+  const crit = engine.getExitCriteriaWithDefs(0)[0].criterion;
+  const now = JSON.parse(handleMarkExitCriterion(engine, { phase: 0, criterion: crit, met: true }));
+  assert.strictEqual(now.success, true);
+  assert.ok(!engine.getPhaseState()!.exitCriteria.some((c) => c.phase === 1), "the refused mark left nothing behind");
+});
+
+test("advance_phase without target_phase says what to pass, never 'Phase undefined'", () => {
+  engine.initProject("Test", "Desc");
+  const r = JSON.parse(handleAdvancePhase(engine, {} as { target_phase: number }));
+  assert.strictEqual(r.success, false);
+  assert.ok(String(r.error).includes("requires target_phase") && String(r.error).includes("next sequential phase is 1"));
+  assert.ok(!String(r.error).includes("undefined"));
+});
+
+test("Phase 4 checks S1-S5, matching its 'Safeguards S1-S5 met' criterion", () => {
+  toPhase5();
+  const st = engine.getPhaseState()!;
+  const ids = (["S1", "S2", "S3", "S4", "S5"] as const).map((id) => validateSafeguard(id, { ...st, currentPhase: 4 }));
+  assert.ok(ids.every((r) => r.details.length > 0));
+  assert.strictEqual(ids[0].status, "warning", "S1 in Phase 4 is an active review of Phase 3");
+  assert.ok(ids[0].details.includes("Phase 4 review"));
+  assert.ok(ids[4].details.includes("Phase 4 review"));
+  const { getSafeguardsForPhase } = require("../rules/safeguards");
+  assert.deepStrictEqual(getSafeguardsForPhase(4).map((s: { id: string }) => s.id), ["S1", "S2", "S3", "S4", "S5"]);
+});
+
+test("S6 is ok (not warning) at 0 undiagnosed failures, warning once they accumulate; S7 is behavioral", () => {
+  toPhase5();
+  const st = () => engine.getPhaseState()!;
+  assert.strictEqual(validateSafeguard("S6", st()).status, "ok", "'warning 0/3' all through Phases 5-6 carried no information");
+  engine.recordTestOutcome("npm test", "fail");
+  assert.strictEqual(validateSafeguard("S6", st()).status, "warning");
+  assert.strictEqual(validateSafeguard("S7", st()).status, "ok");
+});

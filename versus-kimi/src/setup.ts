@@ -188,7 +188,9 @@ export function buildPluginManifest(pluginRoot: string, version: string): Record
     systemPrompt: SESSION_PRIMER,
     hooks: [
       { event: "UserPromptSubmit", command: hookCommand("inject-context.js"), timeout: 30 },
-      { event: "PreToolUse", matcher: "Write|Edit|EnterPlanMode", command: hookCommand("phase-gate.js"), timeout: 15 },
+      // Bash too: shell writes (`cat > src/x <<EOF`) bypassed the gate entirely before 0.12.0.
+      // Kimi has no MultiEdit/NotebookEdit, so unlike Claude there is nothing else to add.
+      { event: "PreToolUse", matcher: "Write|Edit|EnterPlanMode|Bash", command: hookCommand("phase-gate.js"), timeout: 15 },
       { event: "PreToolUse", matcher: "Bash", command: hookCommand("loop-detector.js"), timeout: 15 },
       { event: "PreToolUse", matcher: "Bash", command: hookCommand("block-destructive.js"), timeout: 15 },
       { event: "PostToolUse", matcher: "Grep|Bash", command: hookCommand("truncation-check.js"), timeout: 15 },

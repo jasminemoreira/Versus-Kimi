@@ -46,7 +46,7 @@ async function main() {
   const server = new Server(
     {
       name: "versus-kimi",
-      version: "0.1.0",
+      version: "0.12.0",
     },
     {
       capabilities: {

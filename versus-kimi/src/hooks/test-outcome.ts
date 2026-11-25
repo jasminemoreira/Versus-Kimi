@@ -17,21 +17,7 @@ import { TestProvenance } from "../state/types";
 import {
   readHookInput, resolveWorkspace, toolCommand, toolOutput, queueNotice, pass, HookInput,
 } from "../kimi/hook-io";
-
-const TEST_PATTERNS = [
-  /\bnpm\s+test\b/i,
-  /\bnpx\s+(jest|vitest|mocha)\b/i,
-  /\bpytest\b/i,
-  /\bpython\s+-m\s+(pytest|unittest)\b/i,
-  /\bcargo\s+test\b/i,
-  /\bgo\s+test\b/i,
-  /\bnpm\s+run\s+test\b/i,
-  /\bnode\s+.*test/i,
-];
-
-function isTestCommand(cmd: string): boolean {
-  return TEST_PATTERNS.some((p) => p.test(cmd));
-}
+import { isTestCommand, loadExtraTestPatterns } from "./shell-parse";
 
 // Explicit "nothing failed" statements. Checked FIRST: "0 failed" and
 // "failures: 0" contain the word "failed"/"failures" and would otherwise
@@ -162,8 +148,12 @@ async function main() {
 
   if (!state || state.currentPhase < 5) pass();
 
+  // Recognized per simple command, heredoc bodies and quoted text excluded — a
+  // `cat >> LOG.md <<EOF … npm test … EOF` is a write, not a run, and must not
+  // overwrite a witnessed green lastTestOutcome (the ESJUD study's advance_phase(7) failure).
+  // The same parse covers PostToolUseFailure: toolCommand() reads the command either way.
   const command = toolCommand(input);
-  if (!isTestCommand(command)) pass();
+  if (!isTestCommand(command, loadExtraTestPatterns(workspacePath))) pass();
 
   try {
     const output = toolOutput(input);

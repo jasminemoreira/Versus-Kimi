@@ -9,21 +9,7 @@
 
 import { StateEngine, LOOP_FAILURE_THRESHOLD } from "../state/engine";
 import { readHookInput, resolveWorkspace, toolCommand, deny, pass } from "../kimi/hook-io";
-
-const TEST_PATTERNS = [
-  /\bnpm\s+test\b/i,
-  /\bnpx\s+(jest|vitest|mocha)\b/i,
-  /\bpytest\b/i,
-  /\bpython\s+-m\s+(pytest|unittest)\b/i,
-  /\bcargo\s+test\b/i,
-  /\bgo\s+test\b/i,
-  /\bnpm\s+run\s+test\b/i,
-  /\bnode\s+.*test/i,
-];
-
-function isTestCommand(cmd: string): boolean {
-  return TEST_PATTERNS.some((p) => p.test(cmd));
-}
+import { isTestCommand, loadExtraTestPatterns } from "./shell-parse";
 
 async function main() {
   const input = await readHookInput();
@@ -39,7 +25,7 @@ async function main() {
   if (!engine.isLoopBlocked()) pass();
 
   const command = toolCommand(input);
-  if (!isTestCommand(command)) pass();
+  if (!isTestCommand(command, loadExtraTestPatterns(workspacePath))) pass();
 
   const counter = engine.getLoopCounter();
 

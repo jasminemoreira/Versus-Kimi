@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.12.0] - 2026-11-25
+
+Port of Versus Claude 0.17.0: seven defects found by the first external study of Versus (ESJUD, Zenodo 10.5281/zenodo.22664296), which ran Versus Claude 0.16.4 through all eight phases on macOS/Xcode. Every one of them was also present here; the Claude 0.17.0 CHANGELOG carries the evidence for each.
+
+### Fixed
+- **Text that only MENTIONS a test command no longer counts as a run.** `isTestCommand` ran its regexes over the whole command, so `cat >> GATES.md <<EOF … npm test … EOF` was recorded as an `unknown` run and overwrote a green `lastTestOutcome`. In the study this broke `advance_phase(7)`. A `grep VERSUS_TEST_EXIT LOG.md` would have forged a **pass**. The new `hooks/shell-parse.ts` (shared with Claude, unchanged) reads the command structurally: it drops heredoc bodies, tokenizes with quotes in mind, and anchors the runner at the start of a simple command. `test-outcome` (on both `PostToolUse` and `PostToolUseFailure`) and `loop-detector` use it, with the command still read through `toolCommand()` and the workspace through `resolveWorkspace()`.
+- **Runners outside the npm world are recognized.** `xcodebuild … test`, `swift test`, `gradle`/`gradlew`, `mvn`/`mvnw`, `dotnet test`, `flutter`/`dart test`, `make test|check`, `ctest`, `rspec`, `phpunit`, `mix test`, `tox`, `uv`/`poetry run pytest`, and others. Without this, S6 was blind on Xcode. A project can add its own regexes, one per line, to `.versus/test-commands`. The Phase 6 guidance and the I.3 refusal now say so.
+- **`stop-verify` no longer reports a timeout as a failure.** A check that overran its 60 s used to block with "TESTS FAILED" and no error line; the study's Xcode suite takes 120–185 s. Timeouts are now listed as *not verified*, and the whole run has a 110 s budget. **Kimi's Stop hook timeout is 120 s** (`buildPluginManifest`), the same as Claude's harness, so the 110 s budget carries over unchanged. A timeout-only result is queued as a notice, because Kimi discards non-blocking Stop output.
+- **`phase-gate` covers the shell.** Writes through Bash (`cat > src/App.swift <<EOF`, `tee`, `sed -i`/`perl -i`, the `cp`/`mv`/`install` destination) used to pass in Phases 0–4. The study adopted this as standard practice (D0002). They are now checked against the same rules as Write/Edit. The matcher is `Write|Edit|EnterPlanMode|Bash`: Kimi Code 0.9.0 has no MultiEdit or NotebookEdit tool, so unlike Claude nothing else is added. Relative paths resolve against the payload's `cwd`.
+- **`phase-gate` blocks less.** Documentation and data files (`.md .markdown .txt .csv .tsv .rst .adoc .log`) are writable anywhere. The study had its `research/` log blocked. This also lifts the 0.1.0 rule that refused a root-level `.md` as "ad-hoc". The denial message still points domain material at `specs/`.
+- **`mark_exit_criterion` only accepts the current phase.** The study marked Phase 3 criteria while Versus was still in Phase 2, and gates G2 and G3 landed in the same second. The check lives in the handler, so the engine method stays unrestricted for the tests.
+- **Phase 4 checks S1–S5**, matching its "Safeguards S1-S5 met" criterion. S1, S3 and S5 now apply in Phase 4, and S1 and S5 return a Phase 4 review warning.
+- **`advance_phase` without `target_phase`** returns an error naming the current phase and the next one (and the 2↔3 loop from Phase 3), instead of "Phase undefined". It is deliberately not defaulted. The `_nextAction`, `readyToAdvanceHint` and seven guidance calls now spell `advance_phase(target_phase=N)`. `nextStep` points at the injected `## Phase N` section, because `get_phase_guidance` has been a pointer since 0.11.0.
+- **S6 is `ok` at 0 undiagnosed failures** and `warning` only once they accumulate. **S7 is behavioral** and always `ok`. Both used to sit permanently on `warning` all through Phases 5–6.
+
+### Changed — Kimi-specific decision
+- **Writing outside the workspace is now allowed in Phases 0–4.** 0.11.0 refused it deliberately ("not ours to bless"). Claude 0.17.0 allows it, because the study had the session scratchpad blocked. Kimi now follows Claude: a file outside the project is not the project's code, so it is not the gate's concern. The other Kimi-specific rules are kept: `.env` stays out of the allowlist, `.kimi-code/` and `.vscode/` stay allowed, `agents.md` stays among the basenames, and `EnterPlanMode` is still refused.
+
+### Notes
+- The MCP server's reported version was stuck at `0.1.0` and now reads `0.12.0`.
+- 142 tests (+11 ported from Claude's `External-study fixes (ESJUD)` block, adapted to Kimi's `path` argument and its outside-workspace policy). Two existing gate tests were updated to the new policy: a root `.md` and a path outside the workspace are now allowed.
+- Verified end to end against the bundled hooks with Kimi-shaped payloads. A heredoc after a green run leaves `pass`. `xcodebuild test` with `VERSUS_TEST_EXIT=65` gives `fail`. A shell `cat > src/App.swift` in Phase 2 is denied, while `research/LOG.md` is allowed and `src/specs/Impl.swift` is denied. `"test": "sleep 75"` produces a timeout notice and does not block.
+- Out of scope, as in Claude: an evidence gate for the Phase 5 Scope Inventory remains an open decision.
+
 ## [0.11.0] - 2026-09-03
 
 ### Fixed
