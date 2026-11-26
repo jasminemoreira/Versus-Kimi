@@ -53,26 +53,27 @@ export const getExitCriteriaTool: Tool = {
 };
 
 // --- Transport budgets ---------------------------------------------------
-// A tool result over ~5,700 chars is paged to disk by the host. get_phase_state
-// is the gateway guard — the model is told to call it before anything else — so
-// when it spills, the model proceeds without ever seeing the state. Measured on
-// real projects here: 50.9 KB (projectSpec 39.6 KB) and 21.0 KB (recentDecisions
-// 13.2 KB). Which field dominates varies by project, so both are budgeted.
+// 0.11.0 budgeted this against a ~5,700-char paging limit. That limit was measured
+// on the VS Code chat host (the LocalQwen build), not on Kimi: Kimi Code inlines a
+// tool result up to 50,000 chars (agent-core-v2 toolContract,
+// DEFAULT_TOOL_RESULT_MAX_CHARS) and spills above it; Kimi transcripts show
+// get_phase_guidance at 17,113 chars arriving inline. The budgets stay anyway: the
+// snapshot is the gateway guard, a lean one costs nothing, and the raw fields measured
+// 50.9 KB on a real project — past even the real limit.
 const SPEC_PER_LIST = 6;
 const DECISION_MAXLEN = 200;
 const DECISION_BUDGET = 2200;
 /** Final ceiling for the whole result. The per-field budgets bound COUNTS, not
- *  characters, so a project with six very long constraints still measured 5,623
- *  chars here — 68 below the host's paging limit, which is luck, not a fix, and a
- *  "ready to advance" hint alone adds ~350. This is the invariant that actually
- *  holds: whatever the field shapes, the gateway guard does not page to disk. */
+ *  characters, so a project with six very long constraints still measured 5,623.
+ *  Far under Kimi's 50,000 limit, so this is a size choice, not a paging fix: the
+ *  snapshot stays a snapshot whatever the field shapes. */
 const RESULT_BUDGET = 5200;
 
 /** Newest N per list, INDEPENDENTLY: a 200-entry stack must not evict constraints.
  *  Entries are normalized to plain strings — the {value, phase, at} stamp is analysis
  *  metadata the model never reads. Entries are never truncated: each is a distinct
- *  commitment, and half a constraint is worse than a counted omission. The complete
- *  spec is injected before every message anyway. */
+ *  commitment, and half a constraint is worse than a counted omission. The per-message
+ *  context also lists the spec (each list shortened past 600 chars). */
 function budgetSpec(spec: PhaseState["projectSpec"]): { spec: Record<string, string[]>; omitted: number } {
   const out: Record<string, string[]> = { stack: [], outOfScope: [], patterns: [], constraints: [] };
   let omitted = 0;
@@ -142,7 +143,7 @@ export function handleGetPhaseState(engine: StateEngine): string {
     const phaseCriteria = engine.getExitCriteriaWithDefs(state.currentPhase);
     const allMet = phaseCriteria.length > 0 && phaseCriteria.every((c) => c.met);
     if (allMet) {
-      readyToAdvanceHint = `⚠️ READY TO ADVANCE — Phase ${state.currentPhase} exit criteria are ALL met but currentPhase is still ${state.currentPhase}. Your VERY NEXT tool call MUST be advance_phase(target_phase=${state.currentPhase + 1}). Do NOT write summary text. Do NOT wait for user input. Continue work into Phase ${state.currentPhase + 1} in the same turn.`;
+      readyToAdvanceHint = `⚠️ READY TO ADVANCE — Phase ${state.currentPhase} exit criteria are ALL met but currentPhase is still ${state.currentPhase}. Your VERY NEXT tool call MUST be advance_phase(target_phase=${state.currentPhase + 1}) followed by get_phase_guidance(). Do NOT write summary text. Do NOT wait for user input. Continue work into Phase ${state.currentPhase + 1} in the same turn.`;
     }
   }
 
@@ -152,6 +153,8 @@ export function handleGetPhaseState(engine: StateEngine): string {
     projectSpec: budgetedSpec,
     currentPhase: state.currentPhase,
     currentIteration: state.currentIteration,
+    currentCycle: engine.currentCycle(),
+    archivedCycles: (state.cycles ?? []).map((c) => c.cycle),
     phase0Score: state.phase0Score,
     decisionsCount: state.decisions.length,
     recentDecisions,
@@ -190,7 +193,7 @@ export function handleGetPhaseState(engine: StateEngine): string {
     if (dropped > 0) {
       result._specNote =
         `projectSpec shows the newest per list; ${dropped} older entrie(s) omitted here. ` +
-        `The COMPLETE spec is injected before every message — read it there.`;
+        `The per-message context also lists the spec (each list shortened past 600 chars).`;
     }
     if (state.decisions.length > recentDecisions.length || trimmed) {
       result._decisionsNote =
@@ -202,8 +205,8 @@ export function handleGetPhaseState(engine: StateEngine): string {
   writeNotes();
 
   // Drop oldest-first until the whole result fits: decisions before spec entries,
-  // since get_decisions can retrieve a decision but the spec's older entries are
-  // only in the injection. Bounded by construction — every pass removes an entry.
+  // since get_decisions can retrieve a decision but not a spec entry. Bounded by
+  // construction — every pass removes an entry.
   while (JSON.stringify(result).length > RESULT_BUDGET) {
     if (recentDecisions.length > 1) {
       recentDecisions.shift();
@@ -223,8 +226,8 @@ export function handleGetPhaseState(engine: StateEngine): string {
 }
 
 /** get_phase_state points here for the decisions it could not fit, so this must not
- *  be a bigger leak: a whole dump measured 601 KB on a real project — 106x the host's
- *  paging limit. Newest first, within a budget. */
+ *  be a bigger leak: a whole dump measured 601 KB on a real project — 12x Kimi's
+ *  50,000-char inline limit. Newest first, within a budget. */
 const DECISIONS_BUDGET = 5000;
 
 export function handleGetDecisions(engine: StateEngine, args: { phase?: number }): string {
@@ -302,11 +305,27 @@ export function handleUpdateProjectSpec(
   engine: StateEngine,
   args: { stack?: string[]; outOfScope?: string[]; patterns?: string[]; constraints?: string[] }
 ): string {
+  const before = engine.getProjectSpec();
   engine.updateProjectSpec(args);
-  const spec = engine.getProjectSpec();
+  const after = engine.getProjectSpec();
+  // 0.18.0: return what CHANGED plus counts, not the whole spec. The spec only grows, and
+  // the delivery audit measured a 40,764-char result on QuantumCalc (MCP results persist to
+  // disk past 50,000). The caller already knows what it sent.
+  const keys = ["stack", "outOfScope", "patterns", "constraints"] as const;
+  const added: Record<string, string[]> = {};
+  const counts: Record<string, number> = {};
+  for (const k of keys) {
+    const had = new Set(before[k]);
+    const n = after[k].filter((v) => !had.has(v));
+    if (n.length) added[k] = n;
+    counts[k] = after[k].length;
+  }
   return JSON.stringify({
     success: true,
-    projectSpec: spec,
-    message: "Project spec updated. This context is returned in every call to get_phase_state.",
+    added,
+    counts,
+    message:
+      "Project spec updated. Values already present were kept, not duplicated. get_phase_state shows the newest " +
+      "entries per list, and the per-message context lists the spec.",
   });
 }

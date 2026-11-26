@@ -3,15 +3,16 @@
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { StateEngine } from "../../state/engine";
 import { getPhaseDefinition } from "../../rules/phases";
+import { getPhaseGuidanceText } from "../../rules/full-guidance";
 
 export const getPhaseGuidanceTool: Tool = {
   name: "get_phase_guidance",
   description:
-    "POINTS you at the instructions for the current or specified phase. The complete " +
-    "methodology — global rules, mandatory questions, templates, protocols, checklists " +
-    "and criteria — is already injected into your context before every message; this " +
-    "tool names the section to read rather than repeating it (repeating it paged the " +
-    "result to disk). Call when entering each new phase. Complements get_phase_state.",
+    "Returns the methodology guidance for the current (or specified) phase: the global rules, " +
+    "activation triggers and anti-patterns, plus that phase's full instructions. This is where " +
+    "the methodology text comes from. The per-message context carries only the state and does NOT " +
+    "include it. Call it at the start of every session, after every context compaction, and right " +
+    "after every advance_phase.",
   inputSchema: {
     type: "object" as const,
     properties: {
@@ -38,18 +39,17 @@ export function handleGetPhaseGuidance(engine: StateEngine, args: { phase?: numb
     return JSON.stringify({ error: `Invalid phase: ${phase}. Use 0-7.` });
   }
 
-  // A pointer, not the text. The section ran ~17 KB here — 3x the host's paging
-  // limit — and it is pure redundancy: inject-context puts the complete guidance
-  // in front of the model before every single message. A tool that spills to disk
-  // is strictly worse than one that says where to look.
-  const heading = `## Phase ${phase} — ${getPhaseDefinition(phase)?.name ?? "Unknown"}`;
-
+  // 0.13.0: the real text again. 0.11.0 turned this into a pointer because the complete
+  // guidance was injected before every message. In Kimi that injection did arrive whole
+  // (55-70K per message in the transcripts) but it was appended to the context on EVERY
+  // message, so a 20-message session carried the methodology 20 times. The injection now
+  // carries state only, and this tool is where the text comes from. The "~5,700" paging
+  // limit behind 0.11.0 was the VS Code chat host's (LocalQwen); Kimi inlines MCP results
+  // up to 50,000 chars, and the largest phase here is well under that (a test asserts it).
   return JSON.stringify({
     phase,
     currentPhase: state.currentPhase,
-    guidancePointer:
-      `Phase ${phase} guidance is already in your injected context this turn — read the ` +
-      `"${heading}" section and follow it. The full methodology is injected before every ` +
-      `message; this tool no longer repeats it inline (it spilled to disk).`,
+    name: getPhaseDefinition(phase)?.name ?? "Unknown",
+    guidance: getPhaseGuidanceText(phase),
   });
 }

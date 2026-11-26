@@ -1,5 +1,85 @@
 # Changelog
 
+## [0.13.0] - 2026-11-26
+
+Port of Versus Claude 0.18.0–0.19.0 (`99a041d`, `26fa5ea`, `b01d104`, `2300ad9`). The Claude CHANGELOG carries the evidence for each item. As the port document asks, the host was **measured first** and no number was carried over from Claude.
+
+### The Kimi host, measured (Kimi Code 0.9.0, agent-core-v2; CLI 0.34.0)
+Sources: the engine bundled in the Kimi Code extension (`dist/extension.js`, `features/externalHooks`, `tool/toolContract`) and the transcripts in `~/.kimi-code/sessions/*/agents/*/wire.jsonl`.
+
+| Channel | Contract in the code | What the transcripts show |
+|---|---|---|
+| UserPromptSubmit | plain stdout appended **whole** as `<hook_result hook_event="UserPromptSubmit">`, **no cap**. A JSON stdout is parsed against the schema, and one with no `message` contributes nothing | 0.11.0/0.12.0 injections of **54,609–69,002 chars arrived to their last line** (35 injections, 11 sessions) |
+| MCP tool result | inline up to **50,000 chars** (`DEFAULT_TOOL_RESULT_MAX_CHARS`). Above that it goes to a file plus a pointer, and lines are cut at 2,000. No per-tool override | `get_phase_guidance` **17,113** and `get_phase_state` **7,594** inline. **0 spills** in 113 Versus results |
+| Hook JSON | only `message`, `hookSpecificOutput.message`, `permissionDecision` and `permissionDecisionReason` are read. **No `additionalContext`, no `systemMessage`, no `decision:block`.** Exit 2 blocks with stderr | `[Versus] Blocked: …` refusals in tool results |
+| PostToolUse / PostToolUseFailure | fire-and-forget, output discarded. `tool_output` is capped at 2,000 chars | — (already handled by the notices queue) |
+| Stop | only a block's reason is used: the model continues once per turn | — |
+| **SessionStart / PreCompact** | awaited and **discarded**: their output reaches neither the model nor the user | — |
+| Plugin `systemPrompt` | rebuilt on every request, max 32,768 bytes | present in every session |
+
+**So Kimi never had Claude's critical defect.** The guidance did reach the model. The 0.11.0 premise was wrong in the other direction: its ~5,691-char "paging limit" was the VS Code chat host's (LocalQwen) and never applied here. Kimi inlines up to 50,000.
+
+### Changed (A1): the injection carries state, and the guidance comes from `get_phase_guidance`
+Delivered whole is not the same as cheap. Each injection **stays in the context**, so the methodology (~55–70K) was repeated once per user message, and every decision of every cycle went in full on top of it. Now:
+- **`inject-context` carries state only** (`hooks/state-block.ts`), with the must-see lines first:
+  - phase/iteration/cycle/version;
+  - the update notice;
+  - READY with `advance_phase(target_phase=N)`;
+  - the RESTRICTION line;
+  - S6;
+  - the per-iteration P2 lens warning (Kimi's, kept);
+  - the **queued notices**, which are still the only way back for the PostToolUse and Stop hooks;
+  - the pointer to `get_phase_guidance()`.
+
+  After those come the spec (lists capped at 600) and **this cycle's** decisions, newest first, shortened to 280. The 9,000 budget is a context-cost choice, not a host limit.
+- **`get_phase_guidance` returns the text again**, undoing 0.11.0: the global rules, triggers and anti-patterns, plus the phase section. That is 10.2K–21.4K per phase, against the 50,000 limit, and a test asserts it for every phase.
+- **The session primer** (plugin `systemPrompt`) used to say "the methodology rules are injected with each user message". It now says that the text comes only from `get_phase_guidance()`, at session start, after each `advance_phase` and after a compaction.
+- **`get_phase_state` keeps its 0.11.0 budgets** (lean snapshot). The comments and notes that cited the 5.7K limit or "the complete spec is injected" were corrected.
+
+### Not applicable (A2, A3)
+- **SessionStart and PreCompact are not registered.** Kimi discards both outputs, so a hook there would be a no-op. Session-start and post-compaction recovery rely on the primer (on every request) and on the pointer in the per-message state block.
+- **No mechanical banner.** Kimi's hook contract has no channel to the user (`systemMessage` does not exist there). The version is visible in the state header (`| v0.13.0`), in the plugin's `VERSION` and in `.versus/kimi/VERSION`.
+- **A3 needed no shape changes:** `test-outcome`, `truncation-check` and `stop-verify` already queued their messages instead of printing to a channel Kimi discards. What changed is `kimi/hook-io.ts`:
+  - output is written **synchronously and in full** before `exit()`. An exit right after `write()` drops what has not drained from a pipe (cut at 64 KB in Claude). A write callback was not an option, because the helpers are `never` and callers rely on nothing after them running;
+  - the Kimi contract is documented next to `deny()`/`emit()`.
+
+### Added (B, C, D: same engine as Claude, applied by 3-way merge)
+- **Cycles archived** in `cycles[]`, with the numbering fixed and an export to `.versus/cycles/cycle-N.md` both at the close and at the Phase 7 approval. New tool: `export_cycle`.
+- **Approvals** with `approvedBy` at 3→4, 4→5, 6→7 and the cycle close. They are ordered by `decisionsAt`, not the clock. Decisions also take `proposedBy`.
+- **A run outside the project does not count:** `cwd`/`runDir`/`outsideWorkspace` are recorded. **Kimi:** the Bash tool takes its own `cwd` argument, and it is honoured, resolved against the session directory, both here and in `phase-gate` for relative redirect targets.
+- **Fingerprint** of `architecture.md` on every transition.
+- **Version:** `src/version.ts`, `versusVersion`, the update notice, `migrations[]`, and the version in the header.
+- **`update_project_spec`** returns `{added, counts}`.
+- **S6 pattern** comes from the structural reader.
+- **Deploy (B8):**
+  - a missing bundle is now a visible error (it used to be skipped in silence);
+  - `VERSION` is written to the plugin root **and to `.versus/kimi/VERSION`**, not `.versus/VERSION`: `.versus/` is shared with the sibling builds and Claude writes its own there;
+  - an `onDidChange` listener offers Reload Window. In Kimi it fires in every window, because the hooks are machine-scoped.
+- **Gates of 0.19.0:**
+  - declared checks (`check_command`/`check_expect`), witnessed by the hook in **any** phase. **Kimi:** the hook sees at most the first 2,000 chars of `tool_output`, so an `output:` expectation is matched against that, and a `VERSUS_EXIT=` echo is read only if it fits;
+  - 6→7: the `T-xx` ids of the current version are found in test files, and the version has a `## Desvios` section;
+  - 5→6: a `scope-inventory` decision;
+  - `start_new_cycle`: every lesson carries a `guard:` line.
+- **Guidance (C6):** the new texts are in. In two conflicts the Kimi text was kept and only the 0.19.0 edits were applied: the lens rationale and the guard rule. The severity rationale was rewritten to the product reason (Phase 6 traces every 🔴).
+- **D: research instrumentation removed.** Spec entries are plain strings again (both forms are still read), and model-facing texts give the product reason.
+
+### Tests
+**178** (+36). Fixtures gained `approve()`, the scope inventory, `## Desvios` and `guard:`. The delivery-channel block was **rewritten for Kimi's contract**: registered events must be ones whose output Kimi uses, bundled and in `HOOK_BUNDLES`; JSON keys must be in Kimi's schema; UserPromptSubmit must be plain text; PostToolUse/Stop warnings must be queued, not printed; the primer stays under 32 KB. These tests run the **bundles**: `npm test` now bundles first (`pretest`). Unlike Claude's, `out/hooks/` held no stale build.
+
+### Delivery audit
+**`scripts/audit-delivery.mjs <project>`**, written for Kimi's `wire.jsonl`, reports per session:
+- the primer;
+- the injections (size, version, full guidance or not);
+- the `get_phase_guidance` calls and the notices;
+- the MCP results inline vs spilled;
+- the gate texts the model saw.
+
+It exits 2 on a failed channel. Run it after each Kimi Code update and before each release. Kimi does not log hook stdout, so only the delivered side can be audited.
+
+### Verification
+- `npm test`: 178/178.
+- A real `kimi -p` (CLI 0.34.0) in a Phase 2 project ran the new plugin. The audit shows the primer, and an injection of 615 chars with `| v0.13.0` reaching the context. **The model call failed on the CLI's credentials** ("authorization grant is invalid"), so `get_phase_guidance` and a refused gate in a live session still need checking in a new VS Code session.
+
 ## [0.12.0] - 2026-11-25
 
 Port of Versus Claude 0.17.0: seven defects found by the first external study of Versus (ESJUD, Zenodo 10.5281/zenodo.22664296), which ran Versus Claude 0.16.4 through all eight phases on macOS/Xcode. Every one of them was also present here; the Claude 0.17.0 CHANGELOG carries the evidence for each.

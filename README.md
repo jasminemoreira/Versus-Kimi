@@ -196,7 +196,7 @@ The methodology includes a natural **LLM Switch Point at Phase 4**. The architec
 | Gateway Guard | Model forgetting to load context (>30min without `get_phase_state`) |
 | Phase Gate hook | Code editing in Phases 0-4 (blocked regardless of model) |
 | Loop Detector | Repetitive patterns (>3x same action) — safeguard S7 |
-| Compact Guidance | Summarized instructions injected into every prompt via hook |
+| State Injection | Phase, warnings and recent decisions injected into every prompt via hook; the methodology text comes from `get_phase_guidance` |
 | Phase 7 Engine Hint | Forces meta-iteration offer even if model didn't read guidance |
 
 ## Requirements

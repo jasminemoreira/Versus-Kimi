@@ -9,6 +9,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { spawnSync } from "child_process";
 import { SidebarProvider } from "./views/sidebar";
+import { VERSUS_VERSION } from "./version";
 import {
   ensureMcpConfig,
   ensureGlobalPermissions,
@@ -89,6 +90,26 @@ export function activate(context: vscode.ExtensionContext) {
   } catch (err) {
     log(`deployPlugin WARNING: ${String(err)}`);
   }
+
+  // A window keeps running the Versus it activated with: installing a new version does
+  // not redeploy the plugin hooks or .versus/kimi/server.js until the window reloads
+  // (a sibling build ran 0.18.0 for a whole cycle with 0.18.1 installed). In Kimi the
+  // hooks are machine-scoped, so this matters in every window, not only Versus projects.
+  const extensionId = context.extension?.id ?? "jasminemoreira.versus-kimi";
+  context.subscriptions.push(
+    vscode.extensions.onDidChange(() => {
+      const installed = vscode.extensions.getExtension(extensionId)?.packageJSON?.version;
+      if (installed && installed !== VERSUS_VERSION) {
+        vscode.window
+          .showWarningMessage(
+            `Versus Kimi ${installed} is installed, but this window is still running ${VERSUS_VERSION}: ` +
+            `the Kimi plugin hooks and this project's .versus/kimi/ server stay on ${VERSUS_VERSION} until the window reloads.`,
+            "Reload Window"
+          )
+          .then((a) => { if (a === "Reload Window") vscode.commands.executeCommand("workbench.action.reloadWindow"); });
+      }
+    })
+  );
 
   try {
     const result = ensureGlobalPermissions();
@@ -279,10 +300,11 @@ function deployPlugin(extensionPath: string, version: string) {
   }
   pinCommonJs(targetDir);
 
+  const missing: string[] = [];
   for (const file of HOOK_BUNDLES) {
     const src = path.join(bundleDir, file);
     const dest = path.join(targetDir, file);
-    if (!fs.existsSync(src)) continue;
+    if (!fs.existsSync(src)) { missing.push(file); continue; }   // was a silent skip
 
     const srcContent = fs.readFileSync(src);
     if (fs.existsSync(dest) && srcContent.equals(fs.readFileSync(dest))) continue;
@@ -292,6 +314,15 @@ function deployPlugin(extensionPath: string, version: string) {
 
   writePluginManifest(targetDir, version);
   ensurePluginRegistration(targetDir);
+  // Which Versus the machine-wide plugin carries, readable by people and by the audit.
+  fs.writeFileSync(path.join(targetDir, "VERSION"), VERSUS_VERSION + "\n");
+
+  if (missing.length) {
+    vscode.window.showErrorMessage(
+      `Versus Kimi ${VERSUS_VERSION}: ${missing.length} hook bundle(s) missing from the extension, NOT deployed: ` +
+      `${missing.join(", ")}. Kimi runs those hooks and they will fail silently. Reinstall the extension.`
+    );
+  }
 }
 
 /** Drops the plugin directory and its registry entry. */
@@ -323,12 +354,22 @@ function deployServer(extensionPath: string, workspacePath: string) {
   const targetDir = path.join(workspacePath, BUNDLE_SUBDIR);
   const dest = path.join(targetDir, "server.js");
 
-  if (!fs.existsSync(src)) return;
+  if (!fs.existsSync(src)) {
+    // Was a silent return: the project kept an older server, or none.
+    vscode.window.showErrorMessage(
+      `Versus Kimi ${VERSUS_VERSION}: out/bundle/server.js is missing from the extension, so the MCP server ` +
+      `was NOT deployed to this project. Reinstall the extension.`
+    );
+    return;
+  }
 
   if (!fs.existsSync(targetDir)) {
     fs.mkdirSync(targetDir, { recursive: true });
   }
   pinCommonJs(targetDir);
+  // In .versus/kimi/, not .versus/: .versus/ is shared with the sibling builds, and
+  // Versus Claude writes its own .versus/VERSION.
+  fs.writeFileSync(path.join(targetDir, "VERSION"), VERSUS_VERSION + "\n");
 
   const srcContent = fs.readFileSync(src);
   if (fs.existsSync(dest) && srcContent.equals(fs.readFileSync(dest))) return;

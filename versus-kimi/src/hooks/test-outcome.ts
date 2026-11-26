@@ -12,12 +12,13 @@
 // so a project cannot sit frozen on an outcome nobody produced.
 
 import { createHash } from "crypto";
+import * as path from "path";
 import { StateEngine, LOOP_FAILURE_THRESHOLD } from "../state/engine";
 import { TestProvenance } from "../state/types";
 import {
   readHookInput, resolveWorkspace, toolCommand, toolOutput, queueNotice, pass, HookInput,
 } from "../kimi/hook-io";
-import { isTestCommand, loadExtraTestPatterns } from "./shell-parse";
+import { isTestCommand, loadExtraTestPatterns, testRunLocation } from "./shell-parse";
 
 // Explicit "nothing failed" statements. Checked FIRST: "0 failed" and
 // "failures: 0" contain the word "failed"/"failures" and would otherwise
@@ -88,7 +89,8 @@ const INCONCLUSIVE = [
  * ends with the status of the final run.
  */
 export function detectExitCode(output: string): number | undefined {
-  const ms = [...output.matchAll(/VERSUS_TEST_EXIT=(\d+)/g)];
+  // VERSUS_EXIT (0.13.0) is the general form, also used for declared checks; VERSUS_TEST_EXIT stays valid.
+  const ms = [...output.matchAll(/VERSUS_(?:TEST_)?EXIT=(\d+)/g)];
   return ms.length ? parseInt(ms[ms.length - 1][1], 10) : undefined;
 }
 
@@ -146,14 +148,35 @@ async function main() {
   const engine = new StateEngine(workspacePath);
   const state = engine.getPhaseState();
 
-  if (!state || state.currentPhase < 5) pass();
+  // Every phase: a declared check (0.13.0) can belong to any phase. The test-outcome
+  // part below still applies only from Phase 5 on.
+  if (!state) pass();
 
   // Recognized per simple command, heredoc bodies and quoted text excluded — a
   // `cat >> LOG.md <<EOF … npm test … EOF` is a write, not a run, and must not
   // overwrite a witnessed green lastTestOutcome (the ESJUD study's advance_phase(7) failure).
   // The same parse covers PostToolUseFailure: toolCommand() reads the command either way.
   const command = toolCommand(input);
-  if (!isTestCommand(command, loadExtraTestPatterns(workspacePath))) pass();
+  const extra = loadExtraTestPatterns(workspacePath);
+  const isTest = isTestCommand(command, extra);
+
+  // Declared checks: a criterion that declared a mechanical check needs the engine to SEE
+  // that command run. Matched on every Bash call, in any phase. Kimi sends at most the
+  // first 2,000 chars of tool_output on PostToolUse, so an `output:` expectation is
+  // matched against that, and the exit echo is read only if it fits in it.
+  try {
+    const out = toolOutput(input);
+    const hits = engine.witnessChecks(command, out, classify(input, out).exitCode);
+    if (hits.length) {
+      queueNotice(
+        workspacePath,
+        `[Versus] Declared check witnessed: ` +
+        hits.map((h) => `${h.criterion} (Phase ${h.phase}) ${h.ok ? "✅ expected result" : "❌ NOT the expected result"}`).join("; ") + "."
+      );
+    }
+  } catch { /* never let a check break the hook */ }
+
+  if (!isTest || state.currentPhase < 5) pass();
 
   try {
     const output = toolOutput(input);
@@ -171,7 +194,29 @@ async function main() {
       exitSource,
     };
 
+    // Where the suite actually ran. A pass from outside the project does not satisfy
+    // tests_passing (witnessedTestPass), and the record says so. Kimi's Bash tool takes
+    // its own `cwd` argument, which overrides the session directory for that call.
+    const callCwd = (input.tool_input ?? {})["cwd"];
+    const sessionCwd = input.cwd || workspacePath;
+    const cwd = typeof callCwd === "string" && callCwd ? path.resolve(sessionCwd, callCwd) : sessionCwd;
+    const loc = testRunLocation(command, cwd, workspacePath, extra);
+    provenance.cwd = cwd;
+    if (loc) {
+      provenance.runDir = loc.runDir;
+      if (loc.outsideWorkspace) provenance.outsideWorkspace = true;
+    }
+
     const { count } = engine.recordTestOutcome(command, outcome, provenance);
+
+    if (provenance.outsideWorkspace && outcome === "pass") {
+      queueNotice(
+        workspacePath,
+        `[Versus] The last test run happened OUTSIDE the project (ran in ${provenance.runDir}). ` +
+        `It is recorded, but it does not count as a witnessed run for tests_passing: run the suite from inside the project.`
+      );
+      pass();
+    }
 
     // Kimi discards PostToolUse output, so warnings ride along with the next
     // UserPromptSubmit injection instead of landing in the current turn.

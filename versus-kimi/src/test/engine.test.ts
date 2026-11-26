@@ -19,6 +19,13 @@ import { ensureGlobalPermissions, permissionSnippet, pinCommonJs } from "../setu
 import { specEntryValue, SpecEntry } from "../state/types";
 import { CONDITIONAL_LENSES, UNIVERSAL_LENS_DEFS, CONDITIONAL_LENS_DEFS } from "../rules/lenses";
 import { spawnSync } from "child_process";
+import { handleUpdateProjectSpec } from "../mcp/tools/state-tools";
+import { handleRecordDecision } from "../mcp/tools/record-tools";
+import { handleExportCycle } from "../mcp/tools/transition-tools";
+import { buildInjection, INJECT_BUDGET } from "../hooks/inject-context";
+import { testRunLocation } from "../hooks/shell-parse";
+import { VERSUS_VERSION } from "../version";
+import { buildPluginManifest, HOOK_BUNDLES } from "../setup";
 
 const MATRIX_REL = path.join("specs", "design", "coverage-matrix.md");
 
@@ -439,7 +446,8 @@ function writeArchitectureDoc(ws: string): void {
     "|------|--------|----------------|-----------|------------|\n" +
     "| M-01 | auth | authenticate users | login(user, pass) -> Session | db |\n" +
     "| M-02 | ui   | render views | render(state) -> DOM | auth |\n\n" +
-    "## Assumptions\n- single-threaded runtime\n";
+    "## Assumptions\n- single-threaded runtime\n\n" +
+    "## Desvios\nnenhum\n";   // 6→7 requires the deviations record (0.13.0)
   fs.writeFileSync(path.join(ws, "specs", "technical", "architecture.md"), content);
 }
 
@@ -467,6 +475,11 @@ function reachIter2(iter1: string[], iter2: string[]): void {
   recordLenses(iter2);
 }
 
+/** Records the approval decision a gated transition (3→4, 4→5, 6→7, cycle close) needs (0.13.0). */
+function approve(phase: number, approvedBy = "user") {
+  engine.recordDecision(phase, "approval", `Phase ${phase} reviewed and accepted (test fixture)`, { proposedBy: "Kimi", approvedBy });
+}
+
 function recordLenses(activated: string[] = ["Resilience", "Mechanical Engineering"]) {
   const notActivated = CONDITIONAL_LENSES
     .filter((l) => !activated.includes(l as string))
@@ -491,9 +504,11 @@ function toPhase2Stamped(activatedLenses?: string[]) {
 function toPhase6() {
   toPhase5();
   for (const c of engine.getExitCriteriaWithDefs(5)) engine.markExitCriterion(5, c.criterion, true);
+  engine.recordDecision(5, "scope-inventory", "P1 modules ✅ · specs/validation ✅ · UI runnable ✅ (fixture)");
   engine.advancePhase(6);
   assert.strictEqual(engine.getPhaseState()!.currentPhase, 6);
   writeCriticalCoverage(workspace); // III.1: leaving Phase 6 requires every 🔴 finding traced
+  approve(6);                       // 6→7 needs a recorded test sign-off (0.13.0)
 }
 
 function toPhase5() {
@@ -504,6 +519,7 @@ function toPhase5() {
   for (let p = 0; p <= 4; p++) {
     for (const c of engine.getExitCriteriaWithDefs(p)) engine.markExitCriterion(p, c.criterion, true);
     if (p === 2) recordLenses(); // Phase 2 exit now needs the structured lens record
+    if (p === 3 || p === 4) approve(p);  // 3→4 and 4→5 need a recorded approval (0.13.0)
     engine.advancePhase(p + 1);
   }
   assert.strictEqual(engine.getPhaseState()!.currentPhase, 5, "should be in Phase 5");
@@ -590,6 +606,7 @@ test("different suites are different patterns (S6 speaks of modules)", () => {
 test("a blocked S6 vetoes the phase transition, and says why", () => {
   toPhase5();
   for (const c of engine.getExitCriteriaWithDefs(5)) engine.markExitCriterion(5, c.criterion, true);
+  engine.recordDecision(5, "scope-inventory", "modules ✅ validation ✅ UI ✅ (fixture)");
   for (let i = 0; i < LOOP_FAILURE_THRESHOLD; i++) engine.recordTestOutcome("npm test", "fail");
 
   // Advancing must not be an escape from a blind loop — but the refusal must be legible.
@@ -604,6 +621,7 @@ test("a blocked S6 vetoes the phase transition, and says why", () => {
 test("advancePhase clears the counter (after the loop is diagnosed)", () => {
   toPhase5();
   for (const c of engine.getExitCriteriaWithDefs(5)) engine.markExitCriterion(5, c.criterion, true);
+  engine.recordDecision(5, "scope-inventory", "modules ✅ validation ✅ UI ✅ (fixture)");
   for (let i = 0; i < LOOP_FAILURE_THRESHOLD; i++) engine.recordTestOutcome("npm test", "fail");
 
   engine.recordDecision(5, "diagnosis", "Named the cause.");
@@ -779,7 +797,10 @@ test("a pass witnessed in an EARLIER phase does not satisfy Phase 6", () => {
   toPhase5();
   engine.recordTestOutcome("npm test", "pass"); // green run, but in phase 5
   for (const c of engine.getExitCriteriaWithDefs(5)) engine.markExitCriterion(5, c.criterion, true);
+  engine.recordDecision(5, "scope-inventory", "modules ✅ validation ✅ UI ✅ (fixture)");
   engine.advancePhase(6);
+  approve(6);
+  writeCriticalCoverage(workspace);
   for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
   assert.strictEqual(engine.advancePhase(7).ok, false, "the pass must be witnessed IN phase 6");
 });
@@ -789,6 +810,7 @@ test("start_new_cycle BLOCKED until lessons.md is persisted", () => {
   engine.recordTestOutcome("npm test", "pass");
   engine.advancePhase(7);
   for (const c of engine.getExitCriteriaWithDefs(7)) engine.markExitCriterion(7, c.criterion, true);
+  approve(7);
 
   const blocked = engine.startNewCycle();
   assert.strictEqual(blocked.ok, false);
@@ -797,7 +819,7 @@ test("start_new_cycle BLOCKED until lessons.md is persisted", () => {
 
   fs.writeFileSync(
     path.join(workspace, "specs", "references", "lessons.md"),
-    "# Lessons\n\n- The auth module's session TTL assumption from P0 was wrong; refreshed tokens broke it.\n- The chosen ORM lacked batch upsert; had to hand-roll it.\n"
+    "# Lessons\n\n- The auth module's session TTL assumption from P0 was wrong; refreshed tokens broke it.\n  guard: T-07\n- The chosen ORM lacked batch upsert; had to hand-roll it.\n  guard: none\n"
   );
   const r = engine.startNewCycle();
   assert.strictEqual(r.ok, true);
@@ -866,6 +888,7 @@ test("after a loop, the 3→4 gate re-requires Phase 3 (no stale iteration-1 sta
   }
 
   for (const c of engine.getExitCriteriaWithDefs(3)) engine.markExitCriterion(3, c.criterion, true);
+  approve(3);
   assert.strictEqual(engine.advancePhase(4).ok, true, "…and passes once Phase 3 is redone");
 });
 
@@ -883,14 +906,10 @@ test("the loop-back touches no other phase's criteria (RO3 item 1)", () => {
 
 
 
-test("projectSpec entries are stamped with phase and instant (RO3 item 4)", () => {
+test("projectSpec entries are plain strings again (0.13.0 dropped the research-only stamp)", () => {
   engine.initProject("Test", "Desc");
   engine.updateProjectSpec({ stack: ["TypeScript"], constraints: ["no external auth"] });
-  const entry = engine.getPhaseState()!.projectSpec.stack[0];
-  assert.ok(typeof entry !== "string", "must be stamped, not a bare string");
-  if (typeof entry === "string") return;
-  assert.strictEqual(entry.value, "TypeScript");
-  assert.ok(!Number.isNaN(Date.parse(entry.at)), "at must be an ISO instant");
+  assert.strictEqual(engine.getPhaseState()!.projectSpec.stack[0], "TypeScript", "no {value, phase, at}: no gate read it");
 });
 
 test("a value already present is not re-stamped — the date marks first appearance", () => {
@@ -1058,11 +1077,11 @@ test("a matrix of only module rows (M- echo, zero findings) BLOCKS", () => {
   assert.ok(r.error.missingCriteria.some((m) => m.includes("structured form")), "the block must name the missing form");
 });
 
-test("updateProjectSpec timestamps new entries and dedups by value", () => {
+test("updateProjectSpec stores plain strings and dedups by value", () => {
   engine.initProject("Test", "Desc");
   engine.updateProjectSpec({ stack: ["TypeScript"] });
   const e = engine.getPhaseState()!.projectSpec.stack[0];
-  assert.ok(typeof e === "object" && e.value === "TypeScript" && !!e.at, "new entry carries value + timestamp");
+  assert.strictEqual(e, "TypeScript", "no {value, phase, at} stamp: it was instrumentation no gate read");
 
   engine.updateProjectSpec({ stack: ["TypeScript", "Node 18"] }); // TS repeated
   assert.strictEqual(engine.getPhaseState()!.projectSpec.stack.length, 2, "dedup by value — no duplicate TypeScript");
@@ -1541,7 +1560,7 @@ test("Phase 6 requires premise coverage when premises are NUMBERED (III.2)", () 
     path.join(workspace, "specs", "technical", "architecture.md"),
     "# Architecture\n\n| id | module | responsibility | interface | depends-on |\n|---|---|---|---|---|\n" +
     "| M-01 | auth | a | l() | db |\n| M-02 | ui | r | r() | auth |\n\n" +
-    "## Premissas\n| id | premissa | consequência |\n|---|---|---|\n| A-1 | single-thread | races |\n| A-2 | streaming migration | memory spike |\n"
+    "## Premissas\n| id | premissa | consequência |\n|---|---|---|\n| A-1 | single-thread | races |\n| A-2 | streaming migration | memory spike |\n\n## Desvios\nnenhum\n"
   );
   const r = engine.advancePhase(7);
   assert.strictEqual(r.ok, false, "numbered premises A-1/A-2 must be traced to tests");
@@ -1778,13 +1797,18 @@ test("one decision larger than the whole budget is truncated, not spilled", () =
   assert.ok(JSON.parse(out).decisions[0].content.includes("truncated"), "and it says it was cut");
 });
 
-test("get_phase_guidance points at the injected context instead of repeating it", () => {
+test("get_phase_guidance returns the real phase text, under Kimi's 50,000-char tool-result limit", () => {
+  // 0.11.0 returned a pointer because inject-context carried the whole methodology;
+  // from 0.13.0 the injection carries state only, so the text must come from here.
   engine.initProject("Test", "Desc");
-  const out = handleGetPhaseGuidance(engine, { phase: 2 });
-  assert.ok(out.length < 1000, `a pointer, not 17 KB of prose — got ${out.length}`);
-  const o = JSON.parse(out);
-  assert.ok(o.guidancePointer.includes("Phase 2 — Adversarial Critique"), "it names the section to read");
-  assert.strictEqual(o.guidance, undefined, "the body is gone — inject-context already delivers it");
+  const o = JSON.parse(handleGetPhaseGuidance(engine, { phase: 2 }));
+  assert.ok(typeof o.guidance === "string" && o.guidance.includes("## Phase 2"), "carries the Phase 2 section");
+  assert.ok(o.guidance.includes("ANTI-PATTERNS"), "and the cross-cutting rules");
+  assert.ok(!o.guidance.includes("## Phase 3"), "but not the other phases");
+  for (let p = 0; p <= 7; p++) {
+    const n = handleGetPhaseGuidance(engine, { phase: p }).length;
+    assert.ok(n < 50_000, `Phase ${p} guidance must stay inline in Kimi (got ${n})`);
+  }
 });
 
 console.log("\n=== All tests completed ===\n");
@@ -1907,4 +1931,535 @@ test("S6 is ok (not warning) at 0 undiagnosed failures, warning once they accumu
   engine.recordTestOutcome("npm test", "fail");
   assert.strictEqual(validateSafeguard("S6", st()).status, "warning");
   assert.strictEqual(validateSafeguard("S7", st()).status, "ok");
+});
+
+// --- 0.13.0: port of Versus Claude 0.18.0–0.19.0 ---
+
+console.log("\n=== 0.13.0 — cycle archive, approvals, provenance, delivery ===\n");
+
+/** Phase 7 with every gate satisfied, ready for start_new_cycle. */
+function toPhase7Closable() {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true, `P6 ${c.criterion} details`);
+  engine.recordTestOutcome("npm test; echo VERSUS_TEST_EXIT=$?", "pass", { source: "harness", exitCode: 0, exitSource: "echo", cwd: workspace, runDir: workspace });
+  assert.ok(engine.advancePhase(7).ok, "6→7");
+  for (const c of engine.getExitCriteriaWithDefs(7)) engine.markExitCriterion(7, c.criterion, true, `P7 ${c.criterion} details`);
+  fs.writeFileSync(path.join(workspace, "specs", "references", "lessons.md"),
+    "# Lessons\n\n- The session TTL assumption from P0 was wrong; refreshed tokens broke it. guard: T-07\n- ORM lacked batch upsert. guard: none\n");
+  approve(7);
+}
+
+test("closing a cycle ARCHIVES its exit criteria (with details) instead of wiping them", () => {
+  toPhase7Closable();
+  const r = engine.startNewCycle();
+  assert.ok(r.ok, r.ok ? "" : String(r.error));
+  if (!r.ok) return;
+  assert.strictEqual(r.value.archived, 1);
+  assert.strictEqual(r.value.cycle, 2, "closing cycle 1 opens cycle 2 (was announced as 3 before)");
+  const st = engine.getPhaseState()!;
+  assert.strictEqual(st.exitCriteria.length, 0, "the live criteria still reset for the new cycle");
+  const rec = st.cycles![0];
+  assert.strictEqual(rec.cycle, 1);
+  assert.ok(rec.exitCriteria.some((c) => c.phase === 6 && c.criterion === "tests_passing" && c.details === "P6 tests_passing details"));
+  assert.ok(rec.exitCriteria.find((c) => c.criterion === "tests_passing")!.verifiedBy, "engine provenance survives too");
+  assert.ok(rec.transitions.some((t) => t.from === 6 && t.to === 7));
+  assert.ok(rec.transitions.some((t) => t.from === 7 && t.to === 0));
+  assert.strictEqual(rec.lastTestOutcome?.outcome, "pass");
+  assert.ok(rec.decisionCount >= 3, "the cycle's decisions are counted (approvals at 3, 6, 7)");
+  assert.strictEqual(engine.currentCycle(), 2);
+});
+
+test("the closed cycle is exported to readable Markdown", () => {
+  toPhase7Closable();
+  const r = engine.startNewCycle();
+  assert.ok(r.ok && r.value.exportPath);
+  if (!r.ok) return;
+  const md = fs.readFileSync(path.join(workspace, r.value.exportPath!), "utf-8");
+  assert.ok(md.includes("— Cycle 1"));
+  assert.ok(md.includes("**tests_passing** — P6 tests_passing details"), "criteria with details");
+  assert.ok(md.includes("approved by user"), "decision provenance");
+  assert.ok(md.includes("verified by engine"), "engine provenance");
+  assert.ok(md.includes("## Last witnessed test run"));
+});
+
+test("export_cycle writes the cycle in progress; refuses an unknown cycle with a reason", () => {
+  toPhase5();
+  const ok = JSON.parse(handleExportCycle(engine, {}));
+  assert.strictEqual(ok.success, true);
+  assert.strictEqual(ok.inProgress, true);
+  assert.ok(fs.existsSync(path.join(workspace, ok.path)) && ok.path.endsWith("cycle-1-in-progress.md"));
+  const bad = JSON.parse(handleExportCycle(engine, { cycle: 4 }));
+  assert.strictEqual(bad.success, false);
+  assert.ok(String(bad.error).includes("cycle 1"));
+});
+
+test("3→4 needs an approval decision naming the approver", () => {
+  engine.initProject("Test", "Desc");
+  engine.updateScore(95, makeFullBreakdown(95));
+  writeArchitectureDoc(workspace);
+  writeCoverageMatrix(workspace);
+  for (let p = 0; p <= 2; p++) {
+    for (const c of engine.getExitCriteriaWithDefs(p)) engine.markExitCriterion(p, c.criterion, true);
+    if (p === 2) recordLenses();
+    engine.advancePhase(p + 1);
+  }
+  for (const c of engine.getExitCriteriaWithDefs(3)) engine.markExitCriterion(3, c.criterion, true);
+  const r = engine.advancePhase(4);
+  assert.strictEqual(r.ok, false, "stamped criteria alone no longer cross the convergence gate");
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("approval") && m.includes("approvedBy")));
+  engine.recordDecision(3, "approval", "converged", {});
+  assert.strictEqual(engine.advancePhase(4).ok, false, "an approval without approvedBy is not an approval");
+  approve(3);
+  assert.strictEqual(engine.advancePhase(4).ok, true);
+});
+
+test("an approval recorded in an EARLIER pass of Phase 3 does not carry over the 2↔3 loop", () => {
+  engine.initProject("Test", "Desc");
+  engine.updateScore(95, makeFullBreakdown(95));
+  writeArchitectureDoc(workspace);
+  writeCoverageMatrix(workspace);
+  for (let p = 0; p <= 2; p++) {
+    for (const c of engine.getExitCriteriaWithDefs(p)) engine.markExitCriterion(p, c.criterion, true);
+    if (p === 2) recordLenses();
+    engine.advancePhase(p + 1);
+  }
+  approve(3);
+  assert.ok(engine.advancePhase(2).ok, "…but the user loops back for another critique round");
+  for (const c of engine.getExitCriteriaWithDefs(2)) engine.markExitCriterion(2, c.criterion, true);
+  recordLenses();
+  assert.ok(engine.advancePhase(3).ok);
+  for (const c of engine.getExitCriteriaWithDefs(3)) engine.markExitCriterion(3, c.criterion, true);
+  assert.strictEqual(engine.advancePhase(4).ok, false, "the pass-1 approval answered the OLD design");
+  approve(3);
+  assert.strictEqual(engine.advancePhase(4).ok, true);
+});
+
+test("4→5 needs the convergence confirmation recorded in Phase 4", () => {
+  engine.initProject("Test", "Desc");
+  engine.updateScore(95, makeFullBreakdown(95));
+  writeArchitectureDoc(workspace);
+  writeCoverageMatrix(workspace);
+  for (let p = 0; p <= 3; p++) {
+    for (const c of engine.getExitCriteriaWithDefs(p)) engine.markExitCriterion(p, c.criterion, true);
+    if (p === 2) recordLenses();
+    if (p === 3) approve(3);
+    engine.advancePhase(p + 1);
+  }
+  for (const c of engine.getExitCriteriaWithDefs(4)) engine.markExitCriterion(4, c.criterion, true);
+  const r = engine.advancePhase(5);
+  assert.strictEqual(r.ok, false, "the 3→4 'shall we verify?' approval does not confirm the verification's result");
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("[Phase 4] approval") && m.includes("report")));
+  approve(4);
+  assert.strictEqual(engine.advancePhase(5).ok, true);
+});
+
+test("the cycle close needs a Phase 7 approval decision", () => {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  engine.recordTestOutcome("npm test", "pass");
+  engine.advancePhase(7);
+  for (const c of engine.getExitCriteriaWithDefs(7)) engine.markExitCriterion(7, c.criterion, true);
+  fs.writeFileSync(path.join(workspace, "specs", "references", "lessons.md"), "# Lessons\n\n" + "- a real lesson about the domain that is long enough. ".repeat(3) + "\n  guard: none\n");
+  const r = engine.startNewCycle();
+  assert.strictEqual(r.ok, false);
+  if (r.ok) return;
+  assert.ok(String(r.error).includes("[Phase 7] approval"));
+});
+
+test("a green run OUTSIDE the project does not satisfy tests_passing", () => {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  engine.recordTestOutcome("node test.js", "pass", { source: "harness", cwd: "/tmp/scratch", runDir: "/tmp/scratch", outsideWorkspace: true });
+  const r = engine.advancePhase(7);
+  assert.strictEqual(r.ok, false, "a '24/24' from the scratchpad is not evidence about this project");
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("OUTSIDE the project")));
+});
+
+test("testRunLocation follows cd and flags runs/scripts outside the workspace", () => {
+  const ws = workspace;
+  const at = (cmd: string, cwd = ws) => testRunLocation(cmd, cwd, ws);
+  assert.strictEqual(at("npm test")!.outsideWorkspace, false);
+  assert.strictEqual(at('cd "aplicativo ios" && xcodebuild test -scheme A')!.runDir, path.join(ws, "aplicativo ios"));
+  assert.strictEqual(at('cd "aplicativo ios" && xcodebuild test -scheme A')!.outsideWorkspace, false);
+  assert.strictEqual(at("cd /tmp/scratch && node test.js")!.outsideWorkspace, true, "cd out of the project");
+  assert.strictEqual(at("npm test", "/tmp/elsewhere")!.outsideWorkspace, true, "session cwd outside");
+  assert.strictEqual(at("node /tmp/scratch/check.test.js")!.outsideWorkspace, true, "script invoked by an outside path");
+  assert.strictEqual(at("xcodebuild test -derivedDataPath /tmp/dd -scheme A")!.outsideWorkspace, false, "an outside build dir is not a test script");
+  assert.strictEqual(at("ls -la"), undefined);
+});
+
+test("each transition fingerprints architecture.md (design existed, in that content, before the code)", () => {
+  toPhase5();
+  const t45 = engine.getPhaseState()!.history.find((h) => h.from === 4 && h.to === 5)!;
+  const a = t45.artifacts!.find((x) => x.path === "specs/technical/architecture.md")!;
+  const buf = fs.readFileSync(path.join(workspace, "specs", "technical", "architecture.md"));
+  assert.strictEqual(a.bytes, buf.length);
+  assert.strictEqual(a.sha256, require("crypto").createHash("sha256").update(buf).digest("hex"));
+});
+
+test("decisions carry proposedBy/approvedBy and the cycle", () => {
+  engine.initProject("Test", "Desc");
+  const d = engine.recordDecision(0, "scope", "x", { proposedBy: " Kimi ", approvedBy: "" });
+  assert.strictEqual(d.proposedBy, "Kimi");
+  assert.ok(!("approvedBy" in d), "an empty approver is not recorded as one");
+  assert.strictEqual(d.cycle, 1);
+});
+
+test("version notice: once, for a project last opened by an older Versus, listing what is missing", () => {
+  toPhase7Closable();
+  fs.rmSync(path.join(workspace, "specs", "references", "lessons.md"));
+  const st = engine.getPhaseState()!;
+  delete st.versusVersion;
+  const n = engine.noteVersion()!;
+  assert.strictEqual(n.from, null);
+  assert.ok(n.pending.some((p) => p.includes("references/lessons.md")), "lessons.md missing at the close");
+  assert.ok(n.pending.some((p) => p.includes("approvedBy")));
+  assert.strictEqual(engine.getPhaseState()!.versusVersion, VERSUS_VERSION);
+  assert.strictEqual(engine.getPhaseState()!.migrations!.length, 1, "the migration is recorded");
+  assert.strictEqual(engine.noteVersion(), null, "and announced only once");
+});
+
+test("a new project carries the running version (no spurious notice)", () => {
+  engine.initProject("Test", "Desc");
+  assert.strictEqual(engine.getPhaseState()!.versusVersion, VERSUS_VERSION);
+  assert.strictEqual(engine.noteVersion(), null);
+});
+
+test("VERSUS_VERSION matches package.json", () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "package.json"), "utf-8"));
+  assert.strictEqual(pkg.version, VERSUS_VERSION);
+});
+
+test("the per-message injection stays within its budget even on a huge project", () => {
+  // Kimi does not cap UserPromptSubmit output; the budget is a context-cost choice
+  // (each injection stays in the context), so that is what is asserted.
+  toPhase5();
+  const st = engine.getPhaseState()!;
+  const old = new Date(Date.parse(st.createdAt) - 86_400_000).toISOString();
+  for (let i = 0; i < 60; i++) st.decisions.unshift({ id: `old-${i}`, phase: 2, category: "architecture", content: "OLD CYCLE " + "x".repeat(4000), timestamp: old });
+  for (let i = 0; i < 150; i++) engine.recordDecision(5, "implementation", `decision ${i} ` + "y".repeat(5000));
+  engine.updateProjectSpec({ stack: Array.from({ length: 80 }, (_, i) => `lib-${i}-with-a-long-name`) });
+  engine.recordTestOutcome("npm test", "fail");
+  engine.recordTestOutcome("npm test", "fail");
+  const text = buildInjection(engine)!;
+  assert.ok(text.length <= INJECT_BUDGET + 200, `injection must stay within its budget; got ${text.length}`);
+  assert.ok(text.includes("⚠ S6:"), "the S6 warning is never trimmed away (it used to come after ~60K of guidance)");
+  assert.ok(text.includes("get_phase_guidance()"), "points at where the methodology text is");
+  assert.ok(!text.includes("## Phase 5"), "the methodology itself is no longer injected");
+  assert.ok(text.includes("decision 149"), "newest decision of the cycle shown");
+  assert.ok(!text.includes("OLD CYCLE"), "earlier cycles are not injected");
+  assert.ok(text.includes("export_cycle"), "but the way to reach them is");
+});
+
+test("update_project_spec returns the delta and counts, not the whole (ever-growing) spec", () => {
+  engine.initProject("Test", "Desc");
+  engine.updateProjectSpec({ constraints: Array.from({ length: 300 }, (_, i) => `constraint ${i} ` + "c".repeat(120)) });
+  const out = handleUpdateProjectSpec(engine, { stack: ["Swift 6"] });
+  const o = JSON.parse(out);
+  assert.ok(out.length < 1000, `a real project measured 40,764 chars in the sibling build; got ${out.length}`);
+  assert.deepStrictEqual(o.added, { stack: ["Swift 6"] });
+  assert.strictEqual(o.counts.constraints, 300);
+});
+
+// --- Delivery channels: what each hook emits must be a shape KIMI honours ---
+// Contract read from Kimi Code 0.9.0 (agent-core-v2, externalHooks): runHook.ts parses JSON
+// stdout with a schema that keeps only `message`, `hookSpecificOutput.message`,
+// `permissionDecision` and `permissionDecisionReason`; a JSON object with no message is
+// "structured output" and contributes nothing. UserPromptSubmit appends plain stdout whole as
+// a <hook_result>. PostToolUse/PostToolUseFailure are fire-and-forget, Stop only uses a block
+// reason, and SessionStart/PreCompact output is awaited and discarded. These run each BUNDLED
+// hook as a process — the artifact deployPlugin() copies — and check it against that contract.
+
+console.log("\n=== Delivery channels (Kimi hook contracts) ===\n");
+
+const KIMI_EVENTS_WITH_EFFECT = new Set(["UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+const KIMI_TOP_KEYS = new Set(["message", "hookSpecificOutput"]);
+const KIMI_HSO_KEYS = new Set(["hookEventName", "message", "permissionDecision", "permissionDecisionReason"]);
+
+function runHook(name: string, stdin: Record<string, unknown>): { stdout: string; status: number | null } {
+  const r = spawnSync(process.execPath, [path.join(__dirname, "..", "bundle", `${name}.js`)], {
+    input: JSON.stringify({ cwd: workspace, ...stdin }),   // Kimi locates the project from the payload's cwd
+    encoding: "utf-8",
+    timeout: 20_000,
+  });
+  return { stdout: r.stdout ?? "", status: r.status };
+}
+
+function assertKimiJson(out: string, event: string) {
+  const o = JSON.parse(out);
+  for (const k of Object.keys(o)) assert.ok(KIMI_TOP_KEYS.has(k), `${event}: top-level key "${k}" is ignored by Kimi's hook schema`);
+  if (o.hookSpecificOutput) {
+    for (const k of Object.keys(o.hookSpecificOutput)) assert.ok(KIMI_HSO_KEYS.has(k), `${event}: hookSpecificOutput.${k} is ignored by Kimi`);
+    assert.strictEqual(o.hookSpecificOutput.hookEventName, event, "hookEventName must name the event");
+  }
+  return o;
+}
+
+function notices(): string[] {
+  const p = path.join(workspace, ".versus", "notices.json");
+  return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, "utf-8")) : [];
+}
+
+test("every registered hook is on an event whose output Kimi uses, and is bundled AND deployed", () => {
+  const manifest = buildPluginManifest("/plugin", VERSUS_VERSION);
+  const bundle = fs.readFileSync(path.join(__dirname, "..", "..", "scripts", "bundle.mjs"), "utf-8");
+  for (const h of manifest.hooks as { event: string; command: string }[]) {
+    assert.ok(KIMI_EVENTS_WITH_EFFECT.has(h.event), `${h.event}: Kimi discards this event's output — registering it does nothing`);
+    const script = /([\w-]+)\.js/.exec(h.command)![1];
+    assert.ok(bundle.includes(`out: "${script}"`), `${script} must be bundled (scripts/bundle.mjs)`);
+    assert.ok(HOOK_BUNDLES.includes(`${script}.js`), `${script}.js must be in HOOK_BUNDLES — registered but not copied fails silently`);
+  }
+  assert.ok(Buffer.byteLength(String(manifest.systemPrompt)) < 32_768, "the plugin systemPrompt stays under Kimi's 32 KB cap");
+  assert.ok(String(manifest.systemPrompt).includes("get_phase_guidance()"), "the primer says where the methodology comes from");
+});
+
+test("UserPromptSubmit: PLAIN text (not JSON), state only, within budget, with queued notices", () => {
+  toPhase5();
+  for (let i = 0; i < 120; i++) engine.recordDecision(5, "implementation", `d${i} ` + "z".repeat(6000));
+  fs.writeFileSync(path.join(workspace, ".versus", "notices.json"), JSON.stringify(["[Versus] queued notice X"]));
+  const r = runHook("inject-context", { hook_event_name: "UserPromptSubmit", prompt: [{ type: "text", text: "hi" }] });
+  assert.strictEqual(r.status, 0);
+  assert.ok(r.stdout.startsWith("[Versus] Phase 5"), "plain text — a JSON object without `message` would be swallowed");
+  assert.ok(r.stdout.length <= INJECT_BUDGET + 400, `got ${r.stdout.length}`);
+  assert.ok(r.stdout.includes("queued notice X"), "the PostToolUse/Stop notices ride along");
+  assert.ok(r.stdout.includes("get_phase_guidance()"));
+  assert.ok(!r.stdout.includes("ANTI-PATTERNS"), "no methodology text in the injection anymore");
+  assert.deepStrictEqual(notices(), [], "notices are drained once delivered");
+});
+
+test("PostToolUse test-outcome: no stdout (Kimi discards it); the S6 escalation is queued for the next injection", () => {
+  toPhase5();
+  const cmd = 'npm test; echo "VERSUS_TEST_EXIT=$?"';
+  engine.recordTestOutcome(cmd, "fail");
+  const r = runHook("test-outcome", {
+    hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command: cmd }, tool_output: "boom\nVERSUS_TEST_EXIT=1",
+  });
+  assert.strictEqual(r.stdout.trim(), "");
+  assert.ok(notices().some((n) => n.includes("S6")));
+});
+
+test("PostToolUse test-outcome: a pass run outside the project is recorded, flagged and announced", () => {
+  toPhase6();
+  const r = runHook("test-outcome", {
+    hook_event_name: "PostToolUse", tool_name: "Bash",
+    tool_input: { command: 'npm test; echo "VERSUS_TEST_EXIT=$?"', cwd: "/tmp" }, tool_output: "ok\nVERSUS_TEST_EXIT=0",
+  });
+  assert.strictEqual(r.status, 0);
+  const t = new StateEngine(workspace).getPhaseState()!.lastTestOutcome!;
+  assert.strictEqual(t.outcome, "pass");
+  assert.strictEqual(t.outsideWorkspace, true, "Kimi's per-call Bash cwd is honoured");
+  assert.ok(notices().some((n) => n.includes("OUTSIDE the project")));
+});
+
+test("PostToolUse truncation-check: queued, not printed", () => {
+  engine.initProject("Test", "Desc");
+  const r = runHook("truncation-check", { hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: {}, tool_output: "x\n[stdout truncated at 30000 bytes" });
+  assert.strictEqual(r.stdout.trim(), "");
+  assert.ok(notices().some((n) => n.includes("truncated")));
+});
+
+test("PreToolUse phase-gate and loop-detector: deny via hookSpecificOutput.permissionDecision", () => {
+  engine.initProject("Test", "Desc");
+  const g = runHook("phase-gate", { hook_event_name: "PreToolUse", tool_name: "Write", tool_input: { path: "src/a.ts" } });
+  const go = assertKimiJson(g.stdout, "PreToolUse");
+  assert.strictEqual(go.hookSpecificOutput.permissionDecision, "deny");
+  teardown(); setup();
+  toPhase5();
+  for (let i = 0; i < LOOP_FAILURE_THRESHOLD; i++) engine.recordTestOutcome("npm test", "fail");
+  const l = runHook("loop-detector", { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "npm test" } });
+  const lo = assertKimiJson(l.stdout, "PreToolUse");
+  assert.strictEqual(lo.hookSpecificOutput.permissionDecision, "deny");
+});
+
+test("Stop stop-verify: a block is a deny with the reason; a warning is queued, not printed", () => {
+  toPhase5();
+  fs.writeFileSync(path.join(workspace, "package.json"), JSON.stringify({ scripts: { test: "node -e process.exit(1)" } }));
+  const b = runHook("stop-verify", { hook_event_name: "Stop", stop_hook_active: false });
+  const bo = assertKimiJson(b.stdout, "Stop");
+  assert.strictEqual(bo.hookSpecificOutput.permissionDecision, "deny");
+  assert.ok(String(bo.hookSpecificOutput.permissionDecisionReason).includes("TESTS FAILED"));
+  fs.rmSync(path.join(workspace, "package.json"));
+  const w = runHook("stop-verify", { hook_event_name: "Stop", stop_hook_active: false });
+  assert.strictEqual(w.stdout.trim(), "");
+  assert.ok(notices().some((n) => n.includes("unverified")));
+});
+
+console.log("\n=== 0.13.0 — S6 pattern, version header, Phase 7 export ===\n");
+
+test("S6 pattern ignores the plumbing: pipes and the exit echo do not restart the count", () => {
+  toPhase5();
+  engine.recordTestOutcome('npx playwright test; echo "VERSUS_TEST_EXIT=$?"', "fail");
+  engine.recordTestOutcome('npx playwright test 2>&1 | grep -E "passed|failed"; echo "VERSUS_TEST_EXIT=${PIPESTATUS[0]}"', "fail");
+  assert.strictEqual(engine.getLoopCounter().count, 2, "same suite, different plumbing: one count");
+  assert.strictEqual(engine.getLoopCounter().pattern, "npx playwright test");
+  engine.recordTestOutcome("cd app && npx playwright test --reporter=line", "fail");
+  assert.strictEqual(engine.getLoopCounter().count, 3, "a cd and a flag do not change the suite either");
+  assert.ok(engine.isLoopBlocked());
+});
+
+test("the state header names the running Versus version", () => {
+  toPhase5();
+  const t = buildInjection(engine)!;
+  assert.ok(t.split("\n")[0].endsWith(`| v${VERSUS_VERSION}`), t.split("\n")[0]);
+});
+
+test("the Phase 7 approval writes the cycle record even if no new cycle follows", () => {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true, `P6 ${c.criterion}`);
+  engine.recordTestOutcome("npm test", "pass");
+  assert.ok(engine.advancePhase(7).ok);
+  const r = JSON.parse(handleRecordDecision(engine, { phase: 7, category: "approval", content: "Projeto concluído — atende o MVP", approvedBy: "user ('Projeto concluído')" }));
+  assert.ok(String(r._export).includes(".versus/cycles/cycle-1.md"), "a project that ENDS at Phase 7 still leaves its record");
+  const md = fs.readFileSync(path.join(workspace, ".versus", "cycles", "cycle-1.md"), "utf-8");
+  assert.ok(md.includes("**tests_passing** — P6 tests_passing") && md.includes("Projeto concluído"));
+  const plain = JSON.parse(handleRecordDecision(engine, { phase: 7, category: "process", content: "note" }));
+  assert.ok(!("_export" in plain), "only an approval closes the cycle");
+});
+
+console.log("\n=== 0.13.0 — declared checks, promised tests, deviations, scope inventory, lesson guards ===\n");
+
+function toPhase6Ready() {
+  toPhase6();
+  for (const c of engine.getExitCriteriaWithDefs(6)) engine.markExitCriterion(6, c.criterion, true);
+  engine.recordTestOutcome("npm test", "pass", { source: "harness", exitCode: 0, exitSource: "echo" });
+}
+
+test("a declared check is EXECUTED, not attested: blocked until witnessed with the expected result", () => {
+  toPhase6Ready();
+  const d = JSON.parse(handleMarkExitCriterion(engine, {
+    phase: 6, criterion: "edge_cases", met: true, details: "OAuth removed from all 4 services",
+    check_command: "grep -rli oauth services/ | wc -l", check_expect: "output:^\\s*0\\s*$",
+  }));
+  assert.strictEqual(d.success, true);
+  assert.ok(String(d._check).includes("run it through Bash"));
+  let r = engine.advancePhase(7);
+  assert.strictEqual(r.ok, false, "'grep = 0' attested, never run");
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("has not seen it run")));
+  engine.witnessChecks("cd /x && grep -rli oauth services/ | wc -l", "1\n");
+  r = engine.advancePhase(7);
+  assert.strictEqual(r.ok, false);
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("did NOT give")));
+  engine.witnessChecks("grep -rli oauth services/ | wc -l", "0\n");
+  assert.strictEqual(engine.advancePhase(7).ok, true);
+});
+
+test("an exit-code check uses the VERSUS_EXIT echo; a bad expectation is refused at declaration", () => {
+  toPhase6Ready();
+  assert.strictEqual(engine.declareCheck(6, "edge_cases", "make lint", "exit:0").ok, true);
+  assert.strictEqual(detectExitCode("ok\nVERSUS_EXIT=0"), 0, "the general token is read like the test one");
+  engine.witnessChecks('make lint; echo "VERSUS_EXIT=$?"', "lint ok\nVERSUS_EXIT=0", detectExitCode("lint ok\nVERSUS_EXIT=0"));
+  assert.strictEqual(engine.advancePhase(7).ok, true);
+  assert.strictEqual(engine.declareCheck(6, "x", "true", "zero please").ok, false);
+});
+
+test("the hook witnesses a declared check in ANY phase (not only 5+), via the bundled hook", () => {
+  engine.initProject("Test", "Desc");
+  engine.declareCheck(0, "user_confirmed", "ls specs | wc -l", "output:\\d+");
+  const r = runHook("test-outcome", {
+    hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command: "ls specs | wc -l" }, tool_output: "9\n",
+  });
+  assert.strictEqual(r.status, 0);
+  assert.ok(notices().some((n) => n.includes("user_confirmed")), "the witness is announced through the notice queue");
+  const ck = new StateEngine(workspace).getPhaseState()!.exitCriteria.find((c) => c.criterion === "user_confirmed")!.check!;
+  assert.strictEqual(ck.witnessed?.ok, true);
+});
+
+test("6→7: every T-xx promised by the CURRENT architecture version must appear in a test file", () => {
+  toPhase6Ready();
+  const arch = path.join(workspace, "specs", "technical", "architecture.md");
+  fs.writeFileSync(arch,
+    "# Architecture\n\n## V(1)\n| id | module | responsibility | interface | depends-on |\n|---|---|---|---|---|\n| M-01 | auth | a | l() | db |\n| M-02 | ui | r | r() | auth |\n" +
+    "Promised: T-09 (dropped later)\n\n## V(2)\n| id | module | responsibility | interface | depends-on |\n|---|---|---|---|---|\n| M-01 | auth | a | l() | db |\n| M-02 | ui | r | r() | auth |\n" +
+    "Promised tests: T-01 fast double-tap; T-02 ready flag only with hashed run id\n\n## Desvios\nnenhum\n");
+  fs.mkdirSync(path.join(workspace, "tests"), { recursive: true });
+  fs.writeFileSync(path.join(workspace, "tests", "input.test.js"), "test('T-01 fast double-tap', () => {})\n");
+  const r = engine.advancePhase(7);
+  assert.strictEqual(r.ok, false);
+  if (r.ok) return;
+  const m = r.error.missingCriteria.find((x) => x.includes("promised tests"))!;
+  assert.ok(m.includes("T-02") && !m.includes("T-01") && !m.includes("T-09"), "only the current version's unimplemented promise");
+  fs.writeFileSync(path.join(workspace, "tests", "ready.test.js"), "// T-02\ntest('ready', () => {})\n");
+  assert.strictEqual(engine.advancePhase(7).ok, true);
+});
+
+test("6→7: the current architecture version records its deviations (or 'nenhum')", () => {
+  toPhase6Ready();
+  const arch = path.join(workspace, "specs", "technical", "architecture.md");
+  const base = "# Architecture\n\n## V(1)\n| id | module | responsibility | interface | depends-on |\n|---|---|---|---|---|\n| M-01 | auth | a | l() | db |\n| M-02 | ui | r | r() | auth |\n";
+  fs.writeFileSync(arch, base + "\n## Desvios\nV0 note\n\n## V(2)\n| id | module | responsibility | interface | depends-on |\n|---|---|---|---|---|\n| M-01 | auth | a | l() | db |\n| M-02 | ui | r | r() | auth |\n");
+  let r = engine.advancePhase(7);
+  assert.strictEqual(r.ok, false, "a Desvios section of an OLD version does not cover the current one");
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("Desvios")));
+  fs.appendFileSync(arch, "\n## Desvios\n\n## Notes\nx\n");
+  assert.strictEqual(engine.advancePhase(7).ok, false, "an empty Desvios section is not a record");
+  fs.writeFileSync(arch, fs.readFileSync(arch, "utf-8").replace("## Desvios\n\n## Notes", "## Desvios\n- iframe removed instead of src=about:blank — leak on reopen\n\n## Notes"));
+  assert.strictEqual(engine.advancePhase(7).ok, true);
+});
+
+test("5→6: the Scope Inventory leaves a record", () => {
+  toPhase5();
+  for (const c of engine.getExitCriteriaWithDefs(5)) engine.markExitCriterion(5, c.criterion, true);
+  const r = engine.advancePhase(6);
+  assert.strictEqual(r.ok, false, "MUST DISPLAY was never a record");
+  if (r.ok) return;
+  assert.ok(r.error.missingCriteria.some((m) => m.includes("scope-inventory")));
+  engine.recordDecision(5, "scope-inventory", "all good");
+  assert.strictEqual(engine.advancePhase(6).ok, false, "an inventory without ✅/❌ items is not an inventory");
+  engine.recordDecision(5, "scope-inventory", "M-01 auth ✅\nM-02 ui ✅\nUC-1 end-to-end ✅");
+  assert.strictEqual(engine.advancePhase(6).ok, true);
+});
+
+test("lessons: each says whether it became a guard; 'none' ones are listed for the human", () => {
+  engine.initProject("Test", "Desc");
+  const lp = path.join(workspace, "specs", "references", "lessons.md");
+  fs.writeFileSync(lp,
+    "# Lições\n\n## 1. Domínio — dependências externas\ntexto\nguard: T-07\n\n## 2. Stack — ViewModel recriado\ntexto\n\n" +
+    "## 3. mTLS\ntexto\nguard: none\n\n## Backlog para o ciclo v2.0\n1. item\n");
+  assert.deepStrictEqual(engine.lessons().map((l) => l.guard), ["T-07", null, "none"], "3 lessons; the backlog is not one");
+  fs.writeFileSync(lp, "# Lessons\n\n- first lesson\n  guard: T-01\n- second lesson\nguard: none\n");
+  assert.deepStrictEqual(engine.lessons().map((l) => l.guard), ["T-01", "none"]);
+});
+
+test("start_new_cycle is blocked while a lesson lacks its guard line", () => {
+  toPhase6Ready();
+  assert.ok(engine.advancePhase(7).ok);
+  for (const c of engine.getExitCriteriaWithDefs(7)) engine.markExitCriterion(7, c.criterion, true);
+  approve(7);
+  const lp = path.join(workspace, "specs", "references", "lessons.md");
+  fs.writeFileSync(lp, "# Lessons\n\n- The session TTL assumption from P0 was wrong; refreshed tokens broke it.\n- The ORM lacked batch upsert; had to hand-roll it.\n  guard: none\n");
+  const r = engine.startNewCycle();
+  assert.strictEqual(r.ok, false);
+  if (r.ok) return;
+  assert.ok(String(r.error).includes("guard") && String(r.error).includes("session TTL"));
+  const m = JSON.parse(handleMarkExitCriterion(engine, { phase: 7, criterion: "lessons_documented", met: true }));
+  assert.ok(m._lessonsWithoutGuard.lessons.some((t: string) => t.includes("ORM")), "guard: none lessons go to the human");
+  assert.ok(m._lessonsMissingGuardLine.lessons.some((t: string) => t.includes("session TTL")));
+  fs.writeFileSync(lp, fs.readFileSync(lp, "utf-8").replace("broke it.\n", "broke it.\n  guard: T-07\n"));
+  assert.strictEqual(engine.startNewCycle().ok, true);
+});
+
+test("guidance teaches the new records before the gates fire", () => {
+  engine.initProject("Test", "Desc");
+  const get = (p: number) => JSON.parse(handleGetPhaseGuidance(engine, { phase: p })).guidance as string;
+  assert.ok(get(1).includes("T-01"), "Phase 1: promised tests get ids");
+  assert.ok(get(5).includes("scope-inventory") && get(5).includes("undiscussed-choices"), "Phase 5: inventory record + undiscussed choices");
+  assert.ok(get(6).includes("## Desvios") && get(6).includes("check_command"), "Phase 6: deviations + declared checks");
+  assert.ok(get(7).includes("guard: <test id>"), "Phase 7: lesson guards");
+  for (const p of [3, 4, 6, 7]) assert.ok(get(p).includes("category='approval'"), `Phase ${p}: the approval record`);
+});
+
+test("lessons accumulated across cycles: only the CURRENT cycle's section is asked for guards", () => {
+  engine.initProject("Test", "Desc");
+  const st = engine.getPhaseState()!;
+  st.history.push({ from: 7, to: 0, timestamp: new Date().toISOString(), criteriaMet: [] });
+  fs.writeFileSync(path.join(workspace, "specs", "references", "lessons.md"),
+    "# Lições\n\n# Ciclo 1 — MVP\n\n## Lição 1 — antiga, sem guard\ntexto\n\n## Métricas do ciclo\n- 12 testes\n\n" +
+    "# Ciclo 2 — v2\n\n## Lição 1 — nova\nguard: T-03\n\n## Referências acumuladas\n- doc X\n");
+  assert.deepStrictEqual(engine.lessons().map((l) => l.guard), ["T-03"], "cycle 1's lessons and the metrics/references sections are not asked");
 });

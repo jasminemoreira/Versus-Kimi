@@ -94,7 +94,35 @@ export function resolveWorkspace(input: HookInput): string {
   }
 }
 
-/** Blocks the pending action. Kimi reads the reason from the structured output. */
+/**
+ * Writes all of `text` to stdout synchronously, then the caller may exit.
+ *
+ * `process.stdout.write()` is asynchronous on a pipe, and `process.exit()` right after
+ * it drops whatever had not drained: a piped write was observed cut at 64 KB (Versus
+ * Claude 0.18.0). The helpers below are `never` — callers rely on nothing after them
+ * running — so instead of exiting in a write callback, the bytes are pushed out here
+ * before exit. EAGAIN (non-blocking pipe momentarily full) is retried.
+ */
+function writeAllSync(text: string): void {
+  const buf = Buffer.from(text, "utf-8");
+  let off = 0;
+  while (off < buf.length) {
+    try {
+      off += fs.writeSync(1, buf, off);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EAGAIN") continue;
+      throw err;
+    }
+  }
+}
+
+/**
+ * Blocks the pending action. Kimi's hook runner (agent-core-v2 runHook.ts) parses stdout
+ * against a schema that reads ONLY `message`, `hookSpecificOutput.message`,
+ * `hookSpecificOutput.permissionDecision` and `permissionDecisionReason`: a deny blocks a
+ * PreToolUse call or a UserPromptSubmit, and on Stop the reason makes the model continue.
+ * There is no `additionalContext` and no `systemMessage` in Kimi's contract.
+ */
 export function deny(event: string, reason: string): never {
   const output = {
     hookSpecificOutput: {
@@ -103,7 +131,7 @@ export function deny(event: string, reason: string): never {
       permissionDecisionReason: reason,
     },
   };
-  process.stdout.write(JSON.stringify(output) + "\n");
+  writeAllSync(JSON.stringify(output) + "\n");
   process.exit(0);
 }
 
@@ -113,7 +141,9 @@ export function deny(event: string, reason: string): never {
  * fire-and-forget, so those hooks must use queueNotice() instead.
  */
 export function emit(text: string): never {
-  process.stdout.write(text.endsWith("\n") ? text : text + "\n");
+  // Plain text, NOT JSON: Kimi parses JSON stdout against its schema, and a JSON object
+  // with no `message` key is treated as structured output with nothing to show.
+  writeAllSync(text.endsWith("\n") ? text : text + "\n");
   process.exit(0);
 }
 

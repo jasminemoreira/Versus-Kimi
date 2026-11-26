@@ -2,7 +2,7 @@
   "name": "versus-kimi",
   "displayName": "Versus Kimi",
   "description": "IACDM orchestrator for Kimi Code — 8-phase structured development with adversarial critique, verification gates, and safeguards that close the AI verification gap",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "publisher": "JasmineMoreira",
   "author": "Jasmine Moreira",
   "license": "MIT",
@@ -74,6 +74,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
+    "pretest": "node scripts/bundle.mjs",
     "compile": "tsc -p ./",
     "compile:mcp": "tsc -p ./tsconfig.mcp.json",
     "watch": "tsc -watch -p ./",

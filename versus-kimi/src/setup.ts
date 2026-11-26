@@ -148,6 +148,12 @@ export const HOOK_BUNDLES = [
 // for the recovery instruction — Kimi fires PostCompact as fire-and-forget, so a
 // hook cannot re-inject anything after the conversation is summarized, and the
 // per-message injection only resumes on the user's next prompt.
+//
+// It is also Kimi's session-start channel. Kimi has SessionStart and PreCompact events,
+// but agent-core-v2 awaits those hooks and discards their output (externalHooks
+// triggerSessionStart / runPreCompact): nothing they print reaches the model or the
+// user. So Versus registers neither (unlike Claude 0.18.0), and the load/recover
+// instruction lives here and in the per-message state block.
 const SESSION_PRIMER =
   "Versus/IACDM is installed on this machine. If the current workspace contains " +
   ".versus/state.json, it is a Versus project: the methodology state is owned by the " +
@@ -158,8 +164,11 @@ const SESSION_PRIMER =
   "If get_phase_state() reports the project is not initialized, read the init_project tool " +
   "description first: it carries a bootstrap protocol for workspaces that already contain " +
   "code.\n" +
-  "RECOVERY: the methodology rules are injected with each user message, so a compaction can " +
-  "leave you mid-phase without them. If you cannot state the current phase, its exit criteria " +
+  "The methodology text comes ONLY from get_phase_guidance(): the per-message context carries " +
+  "the project STATE, not the rules. Call it at the start of every session, right after every " +
+  "advance_phase(), and after a compaction.\n" +
+  "RECOVERY: a compaction can leave you mid-phase without the rules. If you cannot state the " +
+  "current phase, its exit criteria " +
   "and the decisions already recorded — or if the conversation was just compacted — call " +
   "get_phase_state() and get_phase_guidance() BEFORE your next action, and get_decisions() if " +
   "you are past Phase 0. Do not infer the phase from the conversation: read it from the tools.\n" +

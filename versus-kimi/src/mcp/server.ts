@@ -12,6 +12,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { StateEngine } from "../state/engine";
+import { VERSUS_VERSION } from "../version";
 import { ALL_TOOLS, handleToolCall } from "./tools/index";
 
 function getWorkspacePath(): string {
@@ -46,7 +47,7 @@ async function main() {
   const server = new Server(
     {
       name: "versus-kimi",
-      version: "0.12.0",
+      version: VERSUS_VERSION,
     },
     {
       capabilities: {

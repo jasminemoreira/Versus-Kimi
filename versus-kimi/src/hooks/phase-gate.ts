@@ -95,7 +95,11 @@ export function isAllowedPath(rawPath: string, workspace: string, cwd: string = 
 export function blockedTargets(input: HookInput, workspace: string): string[] {
   const cwd = typeof input.cwd === "string" && input.cwd ? input.cwd : workspace;
   if (input.tool_name === "Bash") {
-    return writeTargets(toolCommand(input)).filter((t) => !isAllowedPath(t, workspace, cwd));
+    // Kimi's Bash takes its own `cwd` argument (relative to the session directory); a
+    // relative redirect target lands there, not in the session directory.
+    const callCwd = (input.tool_input ?? {})["cwd"];
+    const bashCwd = typeof callCwd === "string" && callCwd ? path.resolve(cwd, callCwd) : cwd;
+    return writeTargets(toolCommand(input)).filter((t) => !isAllowedPath(t, workspace, bashCwd));
   }
   const filePath = toolPath(input);
   return isAllowedPath(filePath, workspace, cwd) ? [] : [filePath];
