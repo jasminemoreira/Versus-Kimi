@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.13.1] - 2026-11-26
+
+Hotfix, port of Versus Claude 0.19.1 (`6186fc0`).
+
+### Fixed
+- **Init Project failed with "Error initializing project": `Cannot find module '../hooks/shell-parse'`.** The 0.13.0 port made `state/engine.ts` import `../hooks/shell-parse`, which the S6 pattern normalization needs. The `.vscodeignore` excludes `out/hooks/**`, because the hooks ship as bundles. Those bundles worked, since esbuild inlines `shell-parse`. But the `out/state/engine.js` that the **extension itself** loads could not resolve the module, so everything that loads the engine in the extension host broke. Init Project was the first visible case, and the sidebar and the activation refresh were affected too. Reproduced by unzipping `versus-kimi-0.13.0.vsix` and requiring `extension/out/state/engine.js`. The tests missed it because they run from the full `out/`, where the file exists.
+- **Fix:** `shell-parse` moved to `src/shell/`. It is not a hook: the engine uses it too. All importers now point at `../shell/shell-parse`: the three hooks, the engine and the tests. Nothing in `kimi/` imported it.
+
+### Added
+- **Packaging guard test (`=== Packaging ===`).** It reads `.vscodeignore` and fails if shipped code imports from an excluded directory (`hooks`, `mcp`, `test`). Unlike Claude's version, it also catches the dynamic forms `import("…")` and `require("…")`, because Kimi's extension loads the engine with `await import("./state/engine")`. Checked against the defect: restoring the old import makes it fail.
+- **Clean build:** `npm run build` now runs `clean` first (it removes `out/`), so the package cannot carry compiled files of moved or deleted modules.
+
+### Verification (on the package, not only the tests)
+- `npm run build && npm test`: 179/179.
+- The `.vsix` contains `extension/out/shell/shell-parse.js`. Unzipped, its `extension/out/state/engine.js` loads, `initProject` works and stamps `versusVersion` 0.13.1, and `setup`, `full-guidance` and `version` load as well (`views/sidebar` needs the `vscode` module, so it only loads inside VS Code).
+
 ## [0.13.0] - 2026-11-26
 
 Port of Versus Claude 0.18.0–0.19.0 (`99a041d`, `26fa5ea`, `b01d104`, `2300ad9`). The Claude CHANGELOG carries the evidence for each item. As the port document asks, the host was **measured first** and no number was carried over from Claude.

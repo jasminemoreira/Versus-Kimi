@@ -20,7 +20,7 @@
 import * as path from "path";
 import { StateEngine } from "../state/engine";
 import { readHookInput, resolveWorkspace, toolPath, toolCommand, deny, pass, HookInput } from "../kimi/hook-io";
-import { writeTargets } from "./shell-parse";
+import { writeTargets } from "../shell/shell-parse";
 
 // Directories that stay writable while the methodology is in its design phases.
 // specs/ is not a courtesy: rule R4 *requires* domain material to be deposited

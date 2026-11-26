@@ -9,7 +9,7 @@
 
 import { StateEngine, LOOP_FAILURE_THRESHOLD } from "../state/engine";
 import { readHookInput, resolveWorkspace, toolCommand, deny, pass } from "../kimi/hook-io";
-import { isTestCommand, loadExtraTestPatterns } from "./shell-parse";
+import { isTestCommand, loadExtraTestPatterns } from "../shell/shell-parse";
 
 async function main() {
   const input = await readHookInput();

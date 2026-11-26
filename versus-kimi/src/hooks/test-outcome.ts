@@ -18,7 +18,7 @@ import { TestProvenance } from "../state/types";
 import {
   readHookInput, resolveWorkspace, toolCommand, toolOutput, queueNotice, pass, HookInput,
 } from "../kimi/hook-io";
-import { isTestCommand, loadExtraTestPatterns, testRunLocation } from "./shell-parse";
+import { isTestCommand, loadExtraTestPatterns, testRunLocation } from "../shell/shell-parse";
 
 // Explicit "nothing failed" statements. Checked FIRST: "0 failed" and
 // "failures: 0" contain the word "failed"/"failures" and would otherwise
