@@ -1,4 +1,4 @@
-# IACDM — Iterative Adversarial Convergence Development Methodology v3.11
+# IACDM — Interactive Adversarial Convergence Development Methodology v3.11
 
 Created by Jasmine Moreira. Rigorous development methodology in 8 phases (0-7) with meta-iteration and scope preservation. Do not advance phases without meeting all exit criteria.
 
@@ -82,23 +82,23 @@ Multiple 2-3 iterations are expected: small 1-2, medium 2-3, large 3-5. Prefer i
 
 ### Verification type per gate:
 
-| Phase | Gate | Primary AV | What it verifies |
+| Phase | Gate | Primary VA | What it verifies |
 |-------|------|-----------|------------------|
-| 0 | G₀ | Human-AV | Problem understanding |
-| 1 | G₁ | Human-AV | Adequacy, completeness |
-| 2 | G₂ | Human-AV + AG (lenses) | Zero critical; decision for important |
-| 3 | G₃ | Human-AV | Complexity ≤ previous version |
-| 4 | G₄ | Human-AV | Rigorous exit criteria |
-| 5 | G₅ | Auto-AV | Syntax, types, style |
-| 6 | G₆ | Auto-AV + human | Functional correctness + UX |
-| 7 | G₇ | Human-AV | Lessons + method evolution |
+| 0 | G₀ | VA-human | Problem understanding |
+| 1 | G₁ | VA-human | Adequacy, completeness |
+| 2 | G₂ | VA-human + GA (lenses) | Critique complete; criticals recorded for Phase 3; decision for importants |
+| 3 | G₃ | VA-human | Complexity ≤ previous version |
+| 4 | G₄ | VA-human | Rigorous exit criteria |
+| 5 | G₅ | VA-automatic | Syntax, types, style |
+| 6 | G₆ | VA-automatic + human | Functional correctness + UX |
+| 7 | G₇ | VA-human | Lessons + method evolution |
 
 ---
 
 ## Phase 0 — Problem Discovery Loop
 
 **Entry:** Methodology activated.
-**Verification:** Human-AV (operator validates synthesis and teach-back).
+**Verification:** VA-human (operator validates synthesis and teach-back).
 
 ### Loop: EXPLORE (HSA) → SYNTHESIZE → VALIDATE → EVALUATE
 
@@ -259,7 +259,7 @@ Note: Delivery Target was already recorded in Step 0.5 — use get_decisions(cat
 ## Phase 1 — Architecture
 
 **Entry:** Phase 0 score ≥90/100.
-**Verification:** Human-AV (operator validates adequacy and completeness).
+**Verification:** VA-human (operator validates adequacy and completeness).
 
 ### Step 0: Consult and populate specs/
 Read specs/technical, examples, models, design. If critical technical/scientific material is missing, research and deposit BEFORE defining modules.
@@ -324,7 +324,7 @@ Call advance_phase() to move to Phase 2. Then call get_phase_guidance() and begi
 ## Phase 2 — Adversarial Critique
 
 **Purpose:** Attack architecture with specialized lenses, generating auditable coverage matrix.
-**Verification:** Human-AV + AG (7 universal + up to 12 conditional lenses as operationally distinct AVs).
+**Verification:** VA-human + GA (7 universal + up to 12 conditional lenses as operationally distinct AVs).
 
 ### Critical-response asymmetry principle:
 **Phase 2 = MULTIPLE agents to ATTACK** (lens diversity is value).
@@ -417,7 +417,7 @@ Test: "Does this change WHAT the system does?" or "WHO it serves?" → SCOPE →
 ## Phase 3 — Simplification
 
 **Purpose:** Simplify V(N) → V(N+1), eliminating complexity.
-**Verification:** Human-AV (operator validates that complexity decreased and scope preserved).
+**Verification:** VA-human (operator validates that complexity decreased and scope preserved).
 
 ### Asymmetry principle (continuation from Phase 2):
 Phase 2 attacked with MULTIPLE lenses. Phase 3 responds with UNIFIED VISION.
@@ -481,7 +481,7 @@ Present recommendation and ask: accept / override. The user validates the RECOMM
 
 **S3 — Premature Convergence Cost.** Stopping early ≈ -400% to -600% ROI.
 
-**S4 — Explicit Verification (mandatory human-AV).** Human-AV is irreplaceable at each gate. Automated tests verify formalizable properties; semantic adequacy, usability, and domain correctness REQUIRE human judgment. Applies to: P0 (validate synthesis), P2 (arbitrate trade-offs), P4 (confirm convergence), P6 (manual test + execute and verify output).
+**S4 — Explicit Verification (mandatory VA-human).** VA-human is irreplaceable at each gate. Automated tests verify formalizable properties; semantic adequacy, usability, and domain correctness REQUIRE human judgment. Applies to: P0 (validate synthesis), P2 (arbitrate trade-offs), P4 (confirm convergence), P6 (manual test + execute and verify output).
 
 **S5 — Scope Preservation.** Phase 2-3 operates WITHIN Phase 0 scope.
 - **5.1** Scope belongs to the user. Phase 2-3 suggests, never decides scope change.
@@ -518,7 +518,7 @@ Checklist per module: mature lib? → if not, why? → documented algorithm? →
 | AP2 | Complexity as false solution | Adding components when critique reveals fragility | Each iteration must simplify |
 | AP3 | Monolithic session | Design, code, and tests in one conversation | One session per phase, one phase per module |
 | AP4 | Implicit assumption | Design works if unlisted conditions are true | Assumptions Lens P2 + P1 assumptions |
-| AP5 | Absence of human-AV | Trusting only automated tests | S4 + mandatory manual testing |
+| AP5 | Absence of VA-human | Trusting only automated tests | S4 + mandatory manual testing |
 | AP6 | Skip Phase 0 | Starting with architecture without understanding the problem (100×) | S0: Score ≥90 |
 | AP7 | Code without reference | Implementing without consulting specs/ or literature | S6 + R4 |
 | AP8 | Convergent perfectionism | Infinite cycles seeking perfection | <15% change + 0 critical → advance |
@@ -547,7 +547,7 @@ When a DON'T action is requested, the AI should inform the user which phase hand
 
 ## Phase 4 — Convergence Gate
 
-**Verification:** Human-AV (operator confirms convergence with rigorous criteria).
+**Verification:** VA-human (operator confirms convergence with rigorous criteria).
 
 Validate complete convergence:
 1. Exit criteria from Phases 2-3 verified
@@ -572,7 +572,7 @@ Phase 4 is the natural boundary for switching LLMs to reduce cost. Phases 0-4 (d
 ## Phase 5 — Code Implementation
 
 **Purpose:** Implement final architecture.
-**Verification:** Auto-AV (compile, lint, type check). Dedicated session per module.
+**Verification:** VA-automatic (compile, lint, type check). Dedicated session per module.
 
 ### Decoupled session:
 Each module implementable in independent session. Context: architecture (~2k tokens) + interface + specs/. If needs more → insufficient granularity (return to P1).
@@ -614,9 +614,9 @@ When scope inventory is all ✅: call advance_phase() to move to Phase 6. Then c
 ## Phase 6 — Tests
 
 **Purpose:** 100% tests passing + manual test + spec coverage verified.
-**Verification:** Auto-AV (tests) + Human-AV (manual exploratory testing).
+**Verification:** VA-automatic (tests) + VA-human (manual exploratory testing).
 
-**S4 — Explicit Verification.** NEVER assume tests passed. Execute and verify. Human-AV is irreplaceable for semantic adequacy and UX.
+**S4 — Explicit Verification.** NEVER assume tests passed. Execute and verify. VA-human is irreplaceable for semantic adequacy and UX.
 
 ### Step 1 — Spec-Driven Test Protocol (MANDATORY before writing any test):
 Test against SPECS, not implementation. The code is suspect — specs are the source of truth.
@@ -683,7 +683,7 @@ Both automated and manual testing must be done before advancing. When both gates
 
 ## Phase 7 — Post-Review
 
-**Verification:** Human-AV (operator evaluates lessons and approves changes).
+**Verification:** VA-human (operator evaluates lessons and approves changes).
 
 ### Update specs/:
 - specs/validation → actual results (expected vs obtained)
